@@ -747,7 +747,8 @@ var OPENAI = [
 ];
 var MODELS = {
   "claude-api": [OPUS, SONNET, HAIKU],
-  "openai-api": OPENAI
+  "openai-api": OPENAI,
+  "openai-sub": OPENAI.map((m) => ({ ...m, speeds: m.speeds.filter((s) => s !== "ultrafast") }))
 };
 var EFFORTS = ["low", "medium", "high", "xhigh", "max"];
 var SPEEDS = ["slow", "fast", "ultrafast"];

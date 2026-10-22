@@ -1,8 +1,9 @@
 // Agent
 // =====
-// claude-api and openai-api in Unii's own loop; a Wire (Anthropic.ts,
-// OpenAI.ts) shapes requests and reads streams. Each step sends every
-// item and streams one output; tool calls run in order, a message sent
+// The API and subscription vendors in Unii's own loop; a Wire
+// (Anthropic.ts, OpenAI.ts, Codex.ts) shapes requests and reads streams.
+// Each step sends every item and streams one output; tool calls run in
+// order, a message sent
 // mid-run follows the next results, and the call ends at a step with no
 // tools and nothing sent. A request goes again, TRIES times at most,
 // after its retry-after or a doubling wait, for a passing reason (`busy`:
@@ -34,6 +35,7 @@
 import { AskAI, type Grant, type Cost, type Ask, type Block, type Flight, type Try, type End, type Event, type Img, type Kind, type Say } from "./AskAI.ts";
 import { Anthropic } from "./Anthropic.ts";
 import { OpenAI } from "./OpenAI.ts";
+import { Codex } from "./Codex.ts";
 import { Price, type Usage } from "./Price.ts";
 import { live_push } from "./View.ts";
 import { Machine, type Spec } from "./Machine.ts";
@@ -94,7 +96,7 @@ export type Emit = (kind: Kind, text: string, fresh?: boolean) => void;
 // counts them (null: not told), and how its stream reads into a step (S:
 // what it read so far)
 export type Wire<S> = {
-  key     : string;
+  key     : string | (() => string);
   idle    : number;
   url     : string;
   headers : (key: string, ask: Ask) => Record<string, string>;
@@ -151,6 +153,8 @@ export namespace Agent {
       try {
         if (ask.vendor === "claude-api") {
           await Agent.loop(Anthropic.wire, run);
+        } else if (ask.vendor === "openai-sub") {
+          await Agent.loop(Codex.wire, run);
         } else {
           await Agent.loop(OpenAI.wire, run);
         }
@@ -167,15 +171,22 @@ export namespace Agent {
   export async function loop<S>(wire: Wire<S>, run: Run): Promise<void> {
     const { ask, on, end } = run;
     const signal = run.abort.signal;
-    const key = config.KEYS[wire.key];
-    if (!key) {
-      throw new Error("no API key: set " + wire.key.toUpperCase() + "_API_KEY");
-    }
+    const key = () => {
+      if (typeof wire.key === "function") {
+        return wire.key();
+      }
+      const value = config.KEYS[wire.key];
+      if (!value) {
+        throw new Error("no API key: set " + wire.key.toUpperCase() + "_API_KEY");
+      }
+      return value;
+    };
+    key();
     const tools = await Agent.server(run);
     const parts = ask.blocks.filter((b) => b.text !== "");
     const items: Item[] = [{ $: "User", parts, imgs: ask.imgs ?? [] }];
     while (!signal.aborted) {
-      const step = await Agent.step(wire, run, key, (max) => wire.body(ask, items, tools, max), items);
+      const step = await Agent.step(wire, run, key(), (max) => wire.body(ask, items, tools, max), items);
       for (const entry of step.entries) {
         on({ $: "Entry", ...entry });
       }

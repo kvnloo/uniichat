@@ -42,8 +42,8 @@ AskAI.ts (model calls and the cache).
 Run it
 ------
 
-You need [Bun](https://bun.sh) and an Anthropic API key (or an OpenAI
-one, below).
+You need [Bun](https://bun.sh) and an Anthropic API key, an OpenAI API key,
+or a ChatGPT subscription signed in through Codex CLI (below).
 
     export ANTHROPIC_API_KEY=sk-ant-...
     bun Server.ts                    # http://127.0.0.1:8788, data in ~/.unii
@@ -78,7 +78,7 @@ also be set as the variable `UNII_<KEY>`:
   http://127.0.0.1:8788). Another port: `UNII_SITE=http://127.0.0.1:9000
   bun Server.ts 9000`.
 - `vendors`: what the server offers, comma-separated: `claude-api`
-  (default), `openai-api`.
+  (default), `openai-api`, `openai-sub` (ChatGPT subscription via Codex CLI).
 - `models`: the models offered, by label (Pick.ts; default all).
 - `pick`: what a chat runs on until it picks another,
   `vendor:model:effort:speed` (default `claude-api:sonnet-5.5:medium:slow`).
@@ -102,6 +102,26 @@ With only an OpenAI key, set `vendors`, `pick` and `compactor` to
 `openai-api` models, e.g. `UNII_VENDORS=openai-api
 UNII_PICK=openai-api:gpt-6.1-sol:medium:slow
 UNII_COMPACTOR=openai-api:gpt-6-luna:high:slow`.
+
+To use a ChatGPT subscription without an API key, sign in with
+[Codex CLI](https://github.com/openai/codex) on the server, then start Unii:
+
+    codex login
+    UNII_VENDORS=openai-sub UNII_MODELS=gpt-6-luna \
+    UNII_PICK=openai-sub:gpt-6-luna:low:slow \
+    UNII_COMPACTOR=openai-sub:gpt-6-luna:low:slow \
+    UNII_AGENTS=openai-sub:gpt-6-luna:low:slow bun Server.ts
+
+All three roles use Luna in this example. `openai-sub` uses your ChatGPT
+plan's Codex limits, not OpenAI API credit. It reads
+`$CODEX_HOME/auth.json` (default `~/.codex/auth.json`) on the server for
+each model step, without copying, changing, or logging the credentials.
+Codex CLI owns authentication; if its access token expires, run
+`codex login` again. API-key-only and OS-keychain-only Codex logins are
+not supported by this file-based adapter. There is no API fallback.
+Subscription requests use implicit caching: Unii's explicit API cache
+breakpoints and output-token caps are not sent to the Codex endpoint.
+Voice transcription still needs a separate `OPENAI_API_KEY`.
 
 A self-hosted server is free: it bills no one, shows no prices, and calls
 only the model vendors. Billing.ts is the one place a hosted server
