@@ -1149,9 +1149,10 @@ function update_newer(ver: string): boolean {
 // runs the installer again: the one way unii changes. The command prints
 // first, so one can run it alone.
 function update_run(url: string): void {
-  const cmd = "curl -fsSL " + url + "/install.sh | sh";
-  console.error(cmd);
-  process.exitCode = child.spawnSync("sh", ["-c", cmd], { stdio: "inherit" }).status ?? 1;
+  const installer = url + "/install.sh";
+  const cmd = 'curl -fsSL -- "$1" | sh';
+  console.error("curl -fsSL -- '" + installer.replaceAll("'", "'\\''") + "' | sh");
+  process.exitCode = child.spawnSync("sh", ["-c", cmd, "unii-update", installer], { stdio: "inherit" }).status ?? 1;
 }
 
 // Main
