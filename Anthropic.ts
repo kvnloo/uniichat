@@ -20,7 +20,7 @@ import { Price, type Usage } from "./Price.ts";
 
 // a stream read so far: the content blocks, the JSON of each tool input
 // that came in pieces, how it stopped and why, its usage, an error
-type State = {
+export type State = {
   blocks : any[];
   json   : string[];
   stop   : string;

@@ -103,24 +103,36 @@ With only an OpenAI key, set `vendors`, `pick` and `compactor` to
 UNII_PICK=openai-api:gpt-6.1-sol:medium:slow
 UNII_COMPACTOR=openai-api:gpt-6-luna:high:slow`.
 
-To use a ChatGPT subscription without an API key, sign in with
-[Codex CLI](https://github.com/openai/codex) on the server, then start Unii:
+To use existing ChatGPT and Claude subscription logins without API keys:
 
-    codex login
-    UNII_VENDORS=openai-sub UNII_MODELS=gpt-6-luna \
+    UNII_VENDORS=openai-sub,anthropic-sub \
     UNII_PICK=openai-sub:gpt-6-luna:low:slow \
     UNII_COMPACTOR=openai-sub:gpt-6-luna:low:slow \
     UNII_AGENTS=openai-sub:gpt-6-luna:low:slow bun Server.ts
 
-All three roles use Luna in this example. `openai-sub` uses your ChatGPT
-plan's Codex limits, not OpenAI API credit. It reads
-`$CODEX_HOME/auth.json` (default `~/.codex/auth.json`) on the server for
-each model step, without copying, changing, or logging the credentials.
-Codex CLI owns authentication; if its access token expires, run
-`codex login` again. API-key-only and OS-keychain-only Codex logins are
-not supported by this file-based adapter. There is no API fallback.
-Subscription requests use implicit caching: Unii's explicit API cache
-breakpoints and output-token caps are not sent to the Codex endpoint.
+All three roles default to Luna in this example, but `/model` offers both
+subscription catalogs. Omit `UNII_MODELS` to offer the whole catalog; set
+it only when you deliberately want to restrict the picker.
+
+`openai-sub` uses your ChatGPT plan's Codex limits, not OpenAI API credit.
+It reads `$CODEX_HOME/auth.json` (default `~/.codex/auth.json`), or the
+existing OpenAI Codex OAuth login in OMP. `anthropic-sub` reuses OMP's
+Anthropic OAuth login and calls the Messages API on your Claude plan.
+OMP's credential store defaults to `~/.omp/agent/agent.db`; set
+`OMP_AGENT_DIR` if yours lives elsewhere. Credentials are read-only:
+Unii does not copy, rotate, or log tokens. Sign in or refresh through the
+owning CLI if neither store has a valid session; no new login is needed
+when an existing session is valid. There is no API fallback.
+
+`SubscriptionModels.ts` records the authenticated provider catalogs
+retrieved on 2026-10-22: nine OpenAI text models and fourteen Claude
+models, with their supported efforts. This is a catalog snapshot, not a
+promise that every plan can run every entry; provider limits and model
+permissions still apply. Refresh the snapshot when the providers change
+their catalogs. API provider catalogs remain separate.
+
+Codex subscription requests use implicit caching: Unii's explicit API
+cache breakpoints and output-token caps are not sent to that endpoint.
 Voice transcription still needs a separate `OPENAI_API_KEY`.
 
 A self-hosted server is free: it bills no one, shows no prices, and calls
@@ -136,6 +148,12 @@ uniichat.com; `unii <url>` opens any server. Run with
 `UNII_COMPUTER=1` on a Mac, the agent may use its screen (it compiles
 Computer.swift with swiftc; macOS asks for Screen Recording and
 Accessibility).
+
+Type `/` to see available slash commands; keep typing to filter.
+Up/Down selects a command, Tab completes it, and Esc dismisses the menu
+without interrupting a running reply. Enter also completes a partial
+command; press Enter again to run it. A fully typed command runs normally.
+Arguments and ordinary messages keep the usual editing and history keys.
 
 Telemetry: once a day the `unii` terminal asks bend-lang.com's /check
 for the latest version (Term.ts update_check), sending its version, OS

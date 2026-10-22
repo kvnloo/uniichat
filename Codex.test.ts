@@ -38,10 +38,10 @@ test("Codex rejects expired and API-key credentials without exposing or changing
     const token = "header." + Buffer.from(JSON.stringify({ exp: 1 })).toString("base64url") + ".signature";
     const expired = JSON.stringify({ tokens: { access_token: token, account_id: "private-account", refresh_token: "private-refresh" } });
     fs.writeFileSync(path.join(home, "auth.json"), expired);
-    expect(() => Codex.key()).toThrow("Codex subscription login expired: run `codex login` again.");
+    expect(() => Codex.key()).toThrow("Codex subscription login expired; let Codex or OMP refresh its login, then retry.");
     expect(fs.readFileSync(path.join(home, "auth.json"), "utf8")).toBe(expired);
     fs.writeFileSync(path.join(home, "auth.json"), JSON.stringify({ OPENAI_API_KEY: "private-api-key" }));
-    expect(() => Codex.key()).toThrow("No Codex subscription login: run `codex login` with your ChatGPT account (not an API key).");
+    expect(() => Codex.key()).toThrow("The Codex login is not a ChatGPT subscription OAuth login.");
   } finally {
     if (before === undefined) delete process.env.CODEX_HOME;
     else process.env.CODEX_HOME = before;

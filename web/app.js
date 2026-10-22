@@ -736,6 +736,37 @@ function row_cells(line) {
   return cells.map((c) => span_parse(c.trim().replace(/\\\|/g, "|")));
 }
 
+// SubscriptionModels.ts
+var EFFORTS = ["low", "medium", "high", "xhigh", "max"];
+var ULTRA = [...EFFORTS, "ultra"];
+var CODEX_MODELS = [
+  { label: "gpt-6.1-sol", id: "gpt-6.1-sol", speeds: ["slow", "fast"], efforts: ULTRA },
+  { label: "gpt-6-astra", id: "gpt-6-astra", speeds: ["slow", "fast"], efforts: ULTRA },
+  { label: "gpt-6-sol", id: "gpt-6-sol", speeds: ["slow", "fast"], efforts: ULTRA },
+  { label: "gpt-reserve", id: "gpt-reserve", speeds: ["slow", "fast"], efforts: EFFORTS },
+  { label: "gpt-6-luna", id: "gpt-6-luna", speeds: ["slow", "fast"], efforts: EFFORTS },
+  { label: "gpt-5.6-sol", id: "gpt-5.6-sol", speeds: ["slow", "fast"], efforts: ULTRA },
+  { label: "gpt-5.6-terra", id: "gpt-5.6-terra", speeds: ["slow", "fast"], efforts: ULTRA },
+  { label: "gpt-5.6-luna", id: "gpt-5.6-luna", speeds: ["slow", "fast"], efforts: EFFORTS },
+  { label: "codex-auto-review", id: "codex-auto-review", speeds: ["slow", "fast"], efforts: EFFORTS }
+];
+var CLAUDE_MODELS = [
+  { label: "haiku-5.5", id: "claude-haiku-5-5", speeds: ["slow"], efforts: EFFORTS, max: 128000, adaptive: true, effort: true },
+  { label: "sonnet-5.5", id: "claude-sonnet-5-5", speeds: ["slow"], efforts: EFFORTS, max: 128000, adaptive: true, effort: true },
+  { label: "opus-5.5", id: "claude-opus-5-5", speeds: ["slow", "fast"], efforts: EFFORTS, max: 128000, adaptive: true, effort: true },
+  { label: "fable-5.1", id: "claude-fable-5-1", speeds: ["slow"], efforts: EFFORTS, max: 128000, adaptive: true, effort: true },
+  { label: "opus-5", id: "claude-opus-5", speeds: ["slow"], efforts: EFFORTS, max: 128000, adaptive: true, effort: true },
+  { label: "sonnet-5", id: "claude-sonnet-5", speeds: ["slow"], efforts: EFFORTS, max: 128000, adaptive: true, effort: true },
+  { label: "fable-5", id: "claude-fable-5", speeds: ["slow"], efforts: EFFORTS, max: 128000, adaptive: true, effort: true },
+  { label: "opus-4.8", id: "claude-opus-4-8", speeds: ["slow"], efforts: EFFORTS, max: 128000, adaptive: true, effort: true },
+  { label: "opus-4.7", id: "claude-opus-4-7", speeds: ["slow"], efforts: EFFORTS, max: 128000, adaptive: true, effort: true },
+  { label: "sonnet-4.6", id: "claude-sonnet-4-6", speeds: ["slow"], efforts: ["low", "medium", "high", "max"], max: 128000, adaptive: true, effort: true },
+  { label: "opus-4.6", id: "claude-opus-4-6", speeds: ["slow"], efforts: ["low", "medium", "high", "max"], max: 128000, adaptive: true, effort: true },
+  { label: "opus-4.5", id: "claude-opus-4-5-20251101", speeds: ["slow"], efforts: ["low", "medium", "high"], max: 64000, adaptive: false, effort: true },
+  { label: "haiku-4.5", id: "claude-haiku-4-5-20251001", speeds: ["slow"], efforts: EFFORTS, max: 64000, adaptive: false, effort: false },
+  { label: "sonnet-4.5", id: "claude-sonnet-4-5-20250929", speeds: ["slow"], efforts: EFFORTS, max: 64000, adaptive: false, effort: false }
+];
+
 // Pick.ts
 var OPUS = { label: "opus-5.5", id: "claude-opus-5-5", speeds: ["slow", "fast"] };
 var SONNET = { label: "sonnet-5.5", id: "claude-sonnet-5-5", speeds: ["slow"] };
@@ -748,9 +779,11 @@ var OPENAI = [
 var MODELS = {
   "claude-api": [OPUS, SONNET, HAIKU],
   "openai-api": OPENAI,
-  "openai-sub": OPENAI.map((m) => ({ ...m, speeds: m.speeds.filter((s) => s !== "ultrafast") }))
+  "openai-sub": CODEX_MODELS,
+  "anthropic-sub": CLAUDE_MODELS
 };
-var EFFORTS = ["low", "medium", "high", "xhigh", "max"];
+var EFFORTS2 = ["low", "medium", "high", "xhigh", "max", "ultra"];
+var API_EFFORTS = EFFORTS2.slice(0, -1);
 var SPEEDS = ["slow", "fast", "ultrafast"];
 var LABELS = [...new Set(Object.values(MODELS).flat().map((m) => m.label))];
 var Pick;
@@ -762,7 +795,10 @@ var Pick;
   function on(pick, vendor, model2) {
     const below = SPEEDS.slice(0, SPEEDS.indexOf(pick.speed) + 1);
     const speed = below.filter((s) => model2.speeds.includes(s)).pop() ?? "slow";
-    return { ...pick, vendor, model: model2.label, speed };
+    const efforts = model2.efforts ?? API_EFFORTS;
+    const belowEffort = EFFORTS2.slice(0, EFFORTS2.indexOf(pick.effort) + 1);
+    const effort = belowEffort.filter((e) => efforts.includes(e)).pop() ?? efforts[0];
+    return { ...pick, vendor, model: model2.label, speed, effort };
   }
   Pick.on = on;
   function models(vendors, labels) {
@@ -781,7 +817,7 @@ var Pick;
       case "up":
       case "down":
       case "effort": {
-        return EFFORTS.map((effort) => [effort, { ...pick, effort }]);
+        return (Pick.model(pick.vendor, pick.model)?.efforts ?? API_EFFORTS).map((effort) => [effort, { ...pick, effort }]);
       }
       case "speed": {
         return speeds.map((speed) => [speed, { ...pick, speed }]);
@@ -812,7 +848,7 @@ var Pick;
   Pick.ask = ask;
   function read(x, offer) {
     const model2 = offer.vendors.includes(x.vendor) && offer.models.includes(x.model) ? Pick.model(x.vendor, x.model) : undefined;
-    if (model2 === undefined || !EFFORTS.includes(x.effort) || !model2.speeds.includes(x.speed)) {
+    if (model2 === undefined || !(model2.efforts ?? API_EFFORTS).includes(x.effort) || !model2.speeds.includes(x.speed)) {
       return null;
     }
     return { vendor: x.vendor, model: x.model, effort: x.effort, speed: x.speed };
@@ -1144,13 +1180,14 @@ function view_pick(v) {
   if (v.pick === null) {
     return [];
   }
-  const { model, effort, speed } = v.pick;
-  const rate = Price.rate(Pick.ask(v.pick).model);
-  const price = rate === undefined ? "" : ": $" + rate.input + "/M tokens in, $" + rate.output + "/M out";
+  const { vendor, model, effort, speed } = v.pick;
+  const subscription = vendor.endsWith("-sub");
+  const rate = subscription ? undefined : Price.rate(Pick.ask(v.pick).model);
+  const price = subscription ? ": subscription plan limits apply" : rate === undefined ? "" : ": $" + rate.input + "/M tokens in, $" + rate.output + "/M out";
   return [
     { text: model, move: "model", hint: model + price },
-    { text: effort, move: "effort", hint: effort + " effort: how long it thinks first; more is smarter, slower and costs more" },
-    { text: speed, move: "speed", hint: speed + ": ×" + Price.times(speed) + " the price" }
+    { text: effort, move: "effort", hint: effort + " effort: how long it thinks first; more is smarter, slower and " + (subscription ? "uses more of your plan" : "costs more") },
+    { text: speed, move: "speed", hint: subscription ? speed + ": subscription plan limits apply" : speed + ": ×" + Price.times(speed) + " the price" }
   ];
 }
 function view_count(v) {

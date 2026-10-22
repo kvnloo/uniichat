@@ -1,7 +1,7 @@
 // Pick
 // ====
 // What a chat's calls run on, kept in its log: a vendor (claude-api,
-// openai-api, openai-sub), a model of its, an effort and a speed; label
+// openai-api, openai-sub, anthropic-sub), a model of its, an effort and a speed; label
 // vendor:model:effort:speed. A chat that saved none takes the config's
 // (`def`). A move steps one part along the picks that differ in it
 // (`options`), wrapping (up and down stop at the ends): next, prev and
@@ -11,6 +11,7 @@
 // doesn't offer gives way to def, never to a pick like it.
 
 import type { Vendor } from "./AskAI.ts";
+import { CODEX_MODELS, CLAUDE_MODELS } from "./SubscriptionModels.ts";
 
 // Types
 // =====
@@ -27,7 +28,7 @@ export type Pick = {
 export type Move = "next" | "prev" | "model" | "up" | "down" | "effort" | "speed";
 
 // a model: as shown, as the vendor names it, its speeds
-export type Model = { label: string; id: string; speeds: string[] };
+export type Model = { label: string; id: string; speeds: string[]; efforts?: string[] };
 
 // what a server offers: vendors, and models by label
 export type Offer = { vendors: Vendor[]; models: string[] };
@@ -35,7 +36,7 @@ export type Offer = { vendors: Vendor[]; models: string[] };
 // Constants
 // =========
 
-export const VENDORS: Vendor[] = ["claude-api", "openai-api", "openai-sub"];
+export const VENDORS: Vendor[] = ["claude-api", "openai-api", "openai-sub", "anthropic-sub"];
 
 const OPUS  : Model = { label: "opus-5.5",   id: "claude-opus-5-5",   speeds: ["slow", "fast"] };
 const SONNET: Model = { label: "sonnet-5.5", id: "claude-sonnet-5-5", speeds: ["slow"] };
@@ -50,10 +51,12 @@ const OPENAI: Model[] = [
 const MODELS: Record<Vendor, Model[]> = {
   "claude-api": [OPUS, SONNET, HAIKU],
   "openai-api": OPENAI,
-  "openai-sub": OPENAI.map((m) => ({ ...m, speeds: m.speeds.filter((s) => s !== "ultrafast") })),
+  "openai-sub": CODEX_MODELS,
+  "anthropic-sub": CLAUDE_MODELS,
 };
 
-export const EFFORTS = ["low", "medium", "high", "xhigh", "max"];
+export const EFFORTS = ["low", "medium", "high", "xhigh", "max", "ultra"];
+const API_EFFORTS = EFFORTS.slice(0, -1);
 
 const SPEEDS = ["slow", "fast", "ultrafast"];
 
@@ -71,7 +74,10 @@ export namespace Pick {
   export function on(pick: Pick, vendor: Vendor, model: Model): Pick {
     const below = SPEEDS.slice(0, SPEEDS.indexOf(pick.speed) + 1);
     const speed = below.filter((s) => model.speeds.includes(s)).pop() ?? "slow";
-    return { ...pick, vendor, model: model.label, speed };
+    const efforts = model.efforts ?? API_EFFORTS;
+    const belowEffort = EFFORTS.slice(0, EFFORTS.indexOf(pick.effort) + 1);
+    const effort = belowEffort.filter((e) => efforts.includes(e)).pop() ?? efforts[0];
+    return { ...pick, vendor, model: model.label, speed, effort };
   }
 
   // the models offered (by label) of these vendors, each with its vendor
@@ -92,7 +98,7 @@ export namespace Pick {
       case "up":
       case "down":
       case "effort": {
-        return EFFORTS.map((effort) => [effort, { ...pick, effort }]);
+        return (Pick.model(pick.vendor, pick.model)?.efforts ?? API_EFFORTS).map((effort) => [effort, { ...pick, effort }]);
       }
       case "speed": {
         return speeds.map((speed) => [speed, { ...pick, speed }]);
@@ -125,7 +131,7 @@ export namespace Pick {
   // as the chat runs it; null: none
   export function read(x: any, offer: Offer): Pick | null {
     const model = offer.vendors.includes(x.vendor) && offer.models.includes(x.model) ? Pick.model(x.vendor, x.model) : undefined;
-    if (model === undefined || !EFFORTS.includes(x.effort) || !model.speeds.includes(x.speed)) {
+    if (model === undefined || !(model.efforts ?? API_EFFORTS).includes(x.effort) || !model.speeds.includes(x.speed)) {
       return null;
     }
     return { vendor: x.vendor, model: x.model, effort: x.effort, speed: x.speed };

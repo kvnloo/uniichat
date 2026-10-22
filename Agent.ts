@@ -36,6 +36,7 @@ import { AskAI, type Grant, type Cost, type Ask, type Block, type Flight, type T
 import { Anthropic } from "./Anthropic.ts";
 import { OpenAI } from "./OpenAI.ts";
 import { Codex } from "./Codex.ts";
+import { Claude } from "./Claude.ts";
 import { Price, type Usage } from "./Price.ts";
 import { live_push } from "./View.ts";
 import { Machine, type Spec } from "./Machine.ts";
@@ -153,6 +154,8 @@ export namespace Agent {
       try {
         if (ask.vendor === "claude-api") {
           await Agent.loop(Anthropic.wire, run);
+        } else if (ask.vendor === "anthropic-sub") {
+          await Agent.loop(Claude.wire, run);
         } else if (ask.vendor === "openai-sub") {
           await Agent.loop(Codex.wire, run);
         } else {
@@ -337,6 +340,11 @@ export namespace Agent {
   // RESULT tokens more; and an output token's, at a prompt that size (a
   // long one may cost more)
   export function worst(ask: Ask, json: string, items: Item[], count: () => Promise<number | null>): Cost {
+    // Subscription quota is not per-token API credit. In particular, older
+    // subscription models need no invented API rate just to use this loop.
+    if (ask.vendor === "openai-sub" || ask.vendor === "anthropic-sub") {
+      return { input: 0, token: 0, exact: null };
+    }
     const imgs = items.flatMap((item) => (item.$ === "User" ? item.imgs : item.$ === "Back" ? item.backs.flatMap((b) => b.out.imgs ?? []) : []));
     const write = Buffer.byteLength(json) + imgs.reduce((n, img) => n + PIC - img.data.length, 0);
     const web = Price.cost(ask.model, { ...Price.usage(ask.speed), write: ask.searches * RESULT, searches: ask.searches });

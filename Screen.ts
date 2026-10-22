@@ -48,6 +48,7 @@ export type Screen = {
   up     : number;
   rows   : number;
   on     : (key: string) => void;
+  intercept? : (key: string) => boolean;
 };
 
 // Constants
@@ -104,6 +105,9 @@ const KEYS: Record<string, string> = {
 
 // a word's character
 const WORD = /[\p{L}\p{N}_]/u;
+
+// Cursor-only keys and footer repaints share the expensive grapheme layout.
+const LAYOUTS = new WeakMap<Ed, { text: string; w: number; rows: string[]; places: Place[] }>();
 
 // modifiers, as bits of (mods - 1)
 const MODS: [number, string][] = [[4, "Ctrl+"], [2, "Alt+"], [1, "Shift+"]];
@@ -216,6 +220,10 @@ function screen_key(scr: Screen, data: string): number {
 
 // a key: an editing key edits the input; any other goes to Term.ts
 function screen_press(scr: Screen, key: string): void {
+  if (scr.intercept?.(key)) {
+    scr.on("");
+    return;
+  }
   if (!ed_key(scr.ed, key)) {
     scr.on(key);
   }
@@ -292,6 +300,10 @@ export function screen_input(scr: Screen, w: number, max: number, hint: string, 
 // the rows' texts, wrapped at ed.w columns (a character at a time); each
 // place of the cursor (before each character, and the end); the cursor's
 function ed_layout(ed: Ed): { rows: string[]; places: Place[]; at: number } {
+  const cached = LAYOUTS.get(ed);
+  if (cached?.text === ed.text && cached.w === ed.w) {
+    return { rows: cached.rows, places: cached.places, at: cached.places.findIndex((p) => p.pos >= ed.pos) };
+  }
   const rows = [""];
   const places: Place[] = [];
   let col = 0;
@@ -316,6 +328,7 @@ function ed_layout(ed: Ed): { rows: string[]; places: Place[]; at: number } {
     col = 0;
   }
   places.push({ pos, row: rows.length - 1, col });
+  LAYOUTS.set(ed, { text: ed.text, w: ed.w, rows, places });
   return { rows, places, at: places.findIndex((p) => p.pos >= ed.pos) };
 }
 

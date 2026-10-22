@@ -53,6 +53,7 @@ type Term = {
   imgs    : Blob[];
   flow    : Map<View.Live, number>;
   logs    : Map<string, number>;
+  completion : { text: string; at: number; hidden: boolean };
 };
 
 // a line of /help: how it is typed ("": keys only), its keys, what it
@@ -220,7 +221,9 @@ function term_new(url: string): Term {
     imgs    : [],
     flow    : new Map(),
     logs    : new Map(),
+    completion : { text: "", at: 0, hidden: false },
   };
+  t.scr.intercept = (key) => term_complete(t, key);
   process.stdin.on("end", () => {
     if (t.scr.ed.text.trim() !== "") {
       term_enter(t);
@@ -356,6 +359,60 @@ function term_press(t: Term, key: string): void {
     cmd[3](t, cmd[0] === "" ? key : "");
   }
   term_draw(t);
+}
+
+// Only the first slash word completes. Arguments and messages retain
+// normal history/editing behavior; Esc dismisses without interrupting work.
+function term_matches(t: Term): Cmd[] {
+  const ed = t.scr.ed;
+  const state = t.completion;
+  if (state.text !== ed.text) {
+    Object.assign(state, { text: ed.text, at: 0, hidden: false });
+  }
+  if (!t.scr.tty || state.hidden || ed.pos !== ed.text.length || !/^\/[a-z]*$/.test(ed.text)) {
+    return [];
+  }
+  const matches = term_commands(t.v).filter(([use]) => use.startsWith(ed.text));
+  state.at = Math.min(state.at, Math.max(0, matches.length - 1));
+  return matches;
+}
+
+function term_complete(t: Term, key: string): boolean {
+  const matches = term_matches(t);
+  if (matches.length === 0) {
+    return false;
+  }
+  const state = t.completion;
+  if (key === "Esc") {
+    state.hidden = true;
+  } else if (key === "Up" || key === "Down") {
+    state.at = (state.at + (key === "Up" ? -1 : 1) + matches.length) % matches.length;
+  } else if (key === "Tab" || (key === "Enter" && matches[state.at][0].split(" ")[0] !== t.scr.ed.text)) {
+    const use = matches[state.at][0];
+    const text = use.split(" ")[0] + (use.includes(" ") ? " " : "");
+    Object.assign(t.scr.ed, { text, pos: text.length, moved: false });
+    Object.assign(state, { text, hidden: true });
+  } else {
+    return false;
+  }
+  return true;
+}
+
+function term_suggestions(t: Term, max: number): Paint.Line[] {
+  const matches = term_matches(t);
+  if (matches.length === 0 || max < 2) {
+    return [];
+  }
+  const count = Math.min(6, max - 1);
+  const at = t.completion.at;
+  const start = Math.max(0, Math.min(at - count + 1, matches.length - count));
+  const lines = matches.slice(start, start + count).map(([use, , text], i) => [
+    Paint.Run(start + i === at ? "> " : "  ", Paint.DIM),
+    Paint.Run(use, { ...Paint.INK, b: start + i === at }),
+    Paint.Run("  " + text, Paint.DIM),
+  ]);
+  lines.push([Paint.Run("  ↑↓ select · Tab complete · Esc dismiss", Paint.DIM)]);
+  return lines;
 }
 
 // Enter: runs a command, or sends the input; text not sent stays (it
@@ -907,9 +964,10 @@ function term_paint(t: Term): void {
   const iw    = term_inner();
   const room  = (process.stdout.rows || 24) - 1;
   const off   = !View.view_typing(t.v);
-  const input = Screen.screen_input(t.scr, iw, room - 3, off ? OFF : View.HINT + " · /help", off);
+  const suggestions = term_suggestions(t, Math.max(0, room - 4));
+  const input = Screen.screen_input(t.scr, iw, room - 3 - suggestions.length, off ? OFF : View.HINT + " · /help", off);
   const under = Paint.rule_text(t.v.up ? "" : "offline", iw);
-  const own   = term_inset([Paint.rule_line(t.v, iw), ...input.lines, under, Paint.tabs_line(t.v, iw)]);
+  const own   = term_inset([Paint.rule_line(t.v, iw), ...input.lines, ...suggestions, under, Paint.tabs_line(t.v, iw)]);
   const rest  = View.view_stream(t.v).map((l) => ({ kind: l.kind, text: l.text.slice(t.flow.get(l) ?? 0) }));
   const held  = t.v.page === null ? View.view_rows(t.v, t.wait).flat() : [];
   const tail  = term_lines([...held, ...View.view_tail(t.v, rest)]).flatMap((l) => Paint.runs_wrap(l, w, true));
