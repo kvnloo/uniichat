@@ -182,13 +182,13 @@ export function registerMemoryTree(host: MemoryTreeHost): MemoryTreeRegistration
         "Level " + level + " of " + memory.maxLevel + " · " + memory.levelCount(level) +
         " nodes · L0 contains source messages; higher levels are compactions");
     const actions = [
-      { id: "previous", keys: ["pageup"], label: "Previous", disabled: page === 0 },
-      { id: "next", keys: ["pagedown"], label: "Next", disabled: page >= pageCount() - 1 },
+      { id: "previous", keys: ["pageup"], label: "Previous", disabled: page === 0 ? "First page" : undefined },
+      { id: "next", keys: ["pagedown"], label: "Next", disabled: page >= pageCount() - 1 ? "Last page" : undefined },
       ...(tab === "level" ? [
-        { id: "coarser", keys: ["left"], label: "Coarser", disabled: level >= memory.maxLevel },
-        { id: "finer", keys: ["right"], label: "Finer", disabled: level <= 0 },
+        { id: "coarser", keys: ["left"], label: "Coarser", disabled: level >= memory.maxLevel ? "Highest level" : undefined },
+        { id: "finer", keys: ["right"], label: "Finer", disabled: level <= 0 ? "Already at sources" : undefined },
       ] : []),
-      { id: "open", keys: ["enter"], label: "Open children", primary: true, disabled: !active || active[1] === 1 },
+      { id: "open", keys: ["enter"], label: "Open children", primary: true, disabled: !active ? "No node" : active[1] === 1 ? "Source message" : undefined },
       { id: "refresh", label: "Refresh roots" },
       { id: "close", keys: ["esc"], label: "Close", end: true },
     ];
