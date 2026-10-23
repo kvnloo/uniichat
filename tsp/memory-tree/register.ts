@@ -12,6 +12,7 @@ export interface MemoryTreeOverlay {
   readonly modal: true;
   node(id: string): JSX.Element;
   onKey(key: Key): boolean;
+  onClose?(): void;
 }
 
 export interface MemoryTreeHost {
@@ -169,7 +170,7 @@ export function registerMemoryTree(host: MemoryTreeHost): MemoryTreeRegistration
             (p[1] === 1 ? "One-line summary" : "Compacted from " + p[1] + " messages") :
             "Waiting for " + (p[1] === 1 ? "source message" : "summary"),
         badges: [
-          { text: p[1] === 1 ? "source / leaf" : "L" + partLevel(p) + " compact" },
+          { text: p[1] === 1 ? "leaf" : "L" + partLevel(p) + " compact" },
           ...(tab === "turn" ? [{ text: "turn context", tone: "accent" as const }] : []),
         ],
       };
@@ -233,6 +234,7 @@ export function registerMemoryTree(host: MemoryTreeHost): MemoryTreeRegistration
   const overlay: MemoryTreeOverlay = {
     key: "unii-memory-tree",
     modal: true,
+    onClose: () => { visible = false; },
     node: () => panel(),
     onKey: (key: Key) => {
       if (key.name === "escape") {
