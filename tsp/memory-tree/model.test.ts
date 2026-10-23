@@ -108,6 +108,8 @@ test("summary provenance is an exact source range, not invented source text", ()
 test("invalid, unsolicited, and leaf zooms cannot mutate the tree", () => {
   const { memory, sent } = make();
   memory.hear({ $: "root", parts: [[0, 4]] });
+  expect(memory.hear(zoomReply([0, 4]))).toBe(false); // Unsolicited reply.
+  expect(memory.expanded.size).toBe(0);
   memory.zoom([0, 1]);
   memory.zoom([8, 2]);
   memory.zoom([2, 2]); // Descendant has not been exposed by its parent.
