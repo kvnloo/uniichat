@@ -27,16 +27,47 @@ test("node coordinates are aligned, bounded powers of two", () => {
   expect(partKey([16, 4])).toBe("16+4");
 });
 
-test("turn context is the server-supplied frozen view, excluding new turn messages", () => {
+test("turn context comes only from frozen model-call field", () => {
   const { memory } = make();
-  memory.hear({ $: "view", parts: [[0, 8], [8, 2], [10, 1], [11, 1]], turn: 11 });
+  memory.hear({ $: "view", parts: [[0, 8], [8, 2], [10, 1], [11, 1]], turn: 11,
+    context: { turn: 11, parts: [[0, 8], [8, 2], [10, 1]] } });
   expect(memory.context()).toEqual([[0, 8], [8, 2], [10, 1]]);
   memory.hear({ $: "entry", id: 12, kind: "user", text: "New turn message" });
   expect(memory.context()).toEqual([[0, 8], [8, 2], [10, 1]]);
   expect(memory.detail([0, 8]).inTurnContext).toBe(true);
   expect(memory.detail([11, 1]).inTurnContext).toBe(false);
-  memory.hear({ $: "view", parts: [[0, 8], [8, 4], [12, 1]], turn: 12 });
+  memory.hear({ $: "view", parts: [[0, 16]], turn: 12,
+    context: { turn: 12, parts: [[0, 8], [8, 4]] } });
   expect(memory.context()).toEqual([[0, 8], [8, 4]]);
+  expect(memory.detail([0, 16]).inTurnContext).toBe(false);
+});
+
+test("import projection and digest never replace the model-call snapshot", () => {
+  const { memory } = make();
+  const held = { turn: 8, parts: [[0, 4], [4, 4]] as Part[] };
+  memory.hear({ $: "view", parts: [[0, 16]], turn: 8, context: held });
+  expect(memory.context()).toEqual([[0, 4], [4, 4]]);
+  expect(memory.detail([0, 16]).inTurnContext).toBe(false);
+  memory.hear({ $: "view", parts: [[0, 16]], turn: 16, context: held });
+  expect(memory.turn).toBe(8);
+  expect(memory.context()).toEqual([[0, 4], [4, 4]]);
+  memory.hear({ $: "view", parts: [[0, 16]], turn: 16, context: null });
+  expect(memory.turn).toBeNull();
+  expect(memory.context()).toEqual([]);
+});
+
+test("missing, invalid, and idle call snapshots never claim past context", () => {
+  const { memory } = make();
+  memory.hear({ $: "view", parts: [[0, 8]], turn: 8 });
+  expect(memory.turn).toBeNull();
+  expect(memory.context()).toEqual([]);
+  memory.hear({ $: "view", parts: [[0, 8]], turn: 8,
+    context: { turn: 8, parts: [[0, 8], [4, 4]] } });
+  expect(memory.turn).toBeNull();
+  memory.hear({ $: "view", parts: [[0, 8]], turn: 8,
+    context: { turn: 8, parts: [] } });
+  expect(memory.turn).toBe(8); // A real call that used no earlier memory.
+  expect(memory.context()).toEqual([]);
 });
 
 test("roots must tile the history; level pages do not enumerate all of it", () => {
@@ -140,13 +171,18 @@ test("levels are paged and pending zooms are bounded", () => {
 
 test("reconnection discards stale wire exposure and rerequests real roots", () => {
   const { memory, sent } = make();
-  memory.hear({ $: "view", parts: [[0, 2], [2, 1]], turn: 2 });
+  memory.hear({ $: "view", parts: [[0, 2], [2, 1]], turn: 2,
+    context: { turn: 2, parts: [[0, 2]] } });
   memory.hear({ $: "root", parts: [[0, 2], [2, 1]] });
   memory.zoom([0, 2]);
   expect(memory.pending.size).toBe(1);
   memory.reconnect();
   expect(memory.pending.size).toBe(0);
   expect(memory.roots).toBeNull();
+  expect(memory.context()).toEqual([]);
+  expect(memory.turn).toBeNull();
+  memory.hear({ $: "view", parts: [[0, 4]], turn: 4,
+    context: { turn: 2, parts: [[0, 2]] } });
   expect(memory.context()).toEqual([[0, 2]]);
   expect(sent.at(-1)).toEqual({ $: "root" });
 });

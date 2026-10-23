@@ -4,10 +4,16 @@ This feature is isolated from the core Tern entry. It presents UniiChat's existi
 OptMem protocol inside a native `@stencil-hq/tern` picker without a second
 WebSocket, a local memory copy, a new server route, or HTML scraping.
 
-- **Turn context:** the exact `view.parts` that the server presents before
-  `view.turn`. Part sizes distinguish older merged memories (L1+) from
-  newer individual message summaries (L0). Live messages after the turn
-  boundary are deliberately not mislabeled as prior model context.
+- **Turn context:** the exact memory blocks frozen at the latest model call
+  in the active turn, sent as `view.context: { turn, parts }`. These are
+  the built nodes from `Memory.view` at `Chat.ask` time. `view.parts`
+  and `view.turn` are **display-only**: imports and compaction can replace
+  them independently of a model call. The server teaches the snapshot's
+  nodes even when hidden from the display. An absent or `null` context
+  means no available current-turn model-call snapshot, **not** zero
+  historical context; a present snapshot with empty parts means a call
+  really used no earlier memory blocks. Context is cleared at turn end,
+  unavailable on cold reload until a new call, and carried on live handoff.
 - **Levels:** level L0 has one message per node; L1 has two, L2 four, and
   so on. Six or fewer parent zooms are outstanding at a time, and only
   sixteen rows are rendered/requested per page.
@@ -53,7 +59,9 @@ memoryTree.dispose();
 These are adapter calls, not a replacement for the core's existing
 message handler. Route server events in wire order: `know` arrives
 before `zoom` and `root`. Native `picker` receives regular semantic
-nodes and reuses the host's overlay focus/close behavior.
+nodes and reuses the host's overlay focus/close behavior. The terminal
+ignores the additive, optional wire field. Never derive call-time context
+from the visible blocks, import state, or raw message ranges.
 
 ## Verification for OMP
 
@@ -62,17 +70,20 @@ From the repository root:
 ```sh
 bun install
 bun run tsp:check
-bun test --isolate tsp/memory-tree/model.test.ts tsp/memory-tree/register.test.ts
+bun test --isolate tsp/memory-tree/model.test.ts tsp/memory-tree/register.test.ts tsp/memory-tree/server-projection.test.ts
 bun run test
-bun build tsp/memory-tree/register.ts --target bun --outfile /tmp/uniichat-memory-tree.js
+bun build tsp/memory-tree/register.ts --target bun --outfile tsp-build/memory-tree.js
 ```
 
 No tests or real Tern-host visual acceptance were run through the GitHub
 connector. After the independent core slice is integrated, verify a
 logged-in UniiChat socket in a Tern host: the newest turn view, levels
 L0 through a merged root, keyboard navigation, source provenance,
-loading summaries, reconnection, and that normal `bun Term.ts` still
-works when Tern is unavailable.
+loading summaries, reconnection, import completion during a turn,
+live handoff, and that normal `bun Term.ts` still works when Tern is
+unavailable. Cold reload does not recover exact historical call context.
+The independent `tsp/core` slice owns integration and dependency
+resolution/lockfile; this branch changes neither.
 
 ## Provenance
 

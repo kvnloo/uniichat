@@ -37,7 +37,8 @@ function makeHost() {
 test("one native overlay registers without opening another Tern surface", () => {
   const h = makeHost();
   const feature = registerMemoryTree(h.host);
-  feature.hear({ $: "view", parts: [[0, 4], [4, 1]], turn: 4 });
+  feature.hear({ $: "view", parts: [[0, 4], [4, 1]], turn: 4,
+    context: { turn: 4, parts: [[0, 4]] } });
   expect(h.opened).toBe(0);
   feature.open();
   feature.open();
@@ -56,7 +57,8 @@ test("one native overlay registers without opening another Tern surface", () => 
 test("native keyboard navigation requests only supported existing read acts", () => {
   const h = makeHost();
   const feature = registerMemoryTree(h.host);
-  feature.hear({ $: "view", parts: [[0, 8]], turn: 8 });
+  feature.hear({ $: "view", parts: [[0, 8]], turn: 8,
+    context: { turn: 8, parts: [[0, 8]] } });
   feature.open();
   feature.hear({ $: "root", parts: [[0, 8]] });
   h.overlay!.onKey(key("tab"));
@@ -104,4 +106,19 @@ test("external overlay replacement releases visibility and allows reopening", ()
   expect(h.sent).toEqual([{ $: "root" }, { $: "root" }]);
   feature.dispose();
   expect(h.closed).toBe(2);
+});
+
+test("registration switches between current model call and idle without another transport", () => {
+  const h = makeHost();
+  const feature = registerMemoryTree(h.host);
+  feature.open();
+  feature.hear({ $: "view", parts: [[0, 16]], turn: 8,
+    context: { turn: 8, parts: [[0, 4], [4, 4]] } });
+  expect(h.overlay!.node("layer.unii-memory-tree")).toBeDefined();
+  const changed = h.changes;
+  feature.hear({ $: "view", parts: [[0, 16]], turn: 16, context: null });
+  expect(h.changes).toBeGreaterThan(changed);
+  expect(h.overlay!.node("layer.unii-memory-tree")).toBeDefined();
+  expect(h.sent).toEqual([{ $: "root" }]);
+  feature.dispose();
 });

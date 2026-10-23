@@ -2,7 +2,7 @@
 // Source of truth: Memory.ts (node coordinates) and Server.ts (Chat.teach/Chat.eye).
 // Never fetch /tree HTML or /export: the authenticated socket already serves these nodes.
 
-import type { Client, Entry, Node as Summary, Part, Server } from "../../View.ts";
+import type { Client, Entry, ModelContext, Node as Summary, Part, Server } from "../../View.ts";
 
 export const PAGE_SIZE = 16;
 const MAX_ZOOMS = 6;
@@ -60,6 +60,22 @@ function validRoots(value: unknown): Part[] | null {
   return found;
 }
 
+// Only a real call-time snapshot, not any display part, can claim context.
+function frozenContext(value: unknown): ModelContext | null {
+  if (value === null || typeof value !== "object") return null;
+  const candidate = value as Partial<ModelContext>;
+  if (typeof candidate.turn !== "number" || !Number.isSafeInteger(candidate.turn) ||
+      candidate.turn < 0 || !Array.isArray(candidate.parts)) return null;
+  const selected: Part[] = [];
+  let last = 0;
+  for (const part of candidate.parts) {
+    if (!validPart(part) || part[0] < last || part[0] + part[1] > candidate.turn) return null;
+    selected.push([part[0], part[1]]);
+    last = part[0] + part[1];
+  }
+  return { turn: candidate.turn, parts: selected };
+}
+
 function keyPart(value: string): Part | null {
   if (!/^(0|[1-9]\d*)\+(1|[1-9]\d*)$/.test(value)) return null;
   const [a, b] = value.split("+").map(Number);
@@ -107,9 +123,10 @@ export class MemoryTree {
       case "view": {
         if (!Number.isSafeInteger(message.turn) || message.turn < 0) return false;
         const seen = parts(message.parts);
-        this.turnParts = seen;
-        this.turn = message.turn;
-        for (const part of seen) this.exposed.add(partKey(part));
+        const snapshot = frozenContext(message.context);
+        this.turnParts = snapshot?.parts ?? [];
+        this.turn = snapshot?.turn ?? null;
+        for (const part of [...seen, ...this.turnParts]) this.exposed.add(partKey(part));
         return true;
       }
       case "root": {
@@ -145,10 +162,9 @@ export class MemoryTree {
     }
   }
 
-  /** The source messages and summaries actually presented before the turn boundary. */
+  /** Only the exact frozen memory parts used by a current-turn model call. */
   context(): Part[] {
-    return this.turn === null ? [] :
-      this.turnParts.filter(p => p[0] + p[1] <= this.turn!);
+    return this.turnParts.slice();
   }
 
   contextAt(page: number): Part[] {
@@ -260,7 +276,9 @@ export class MemoryTree {
     this.expanded.clear();
     this.exposed.clear();
     this.roots = null;
-    // The last turn snapshot stays visible until the new join delivers its view.
+    // Never display disconnected context; a new join supplies a new truth.
+    this.turn = null;
+    this.turnParts = [];
     this.requestRoots();
   }
 }

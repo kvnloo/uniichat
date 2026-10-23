@@ -128,7 +128,7 @@ export function registerMemoryTree(host: MemoryTreeHost): MemoryTreeRegistration
   const preview = (part: Part | null): JSX.Element[] => {
     if (!part) {
       return [textNode("none", tab === "turn" ?
-        "No context snapshot yet. The server sends the exact view at the next turn." :
+        "No active-turn model snapshot. Idle or awaiting a model call; previous calls are not reconstructable." :
         memory.roots === null ? "Loading memory roots from UniiChat…" : "No nodes at this level.")];
     }
     const detail = memory.detail(part);
@@ -175,10 +175,10 @@ export function registerMemoryTree(host: MemoryTreeHost): MemoryTreeRegistration
         ],
       };
     });
-    const title = tab === "turn" ? "Memory in view for current turn" : "OptMem levels";
+    const title = tab === "turn" ? "Model-call memory · active turn" : "OptMem levels";
     const subtitle = tab === "turn" ?
-      (memory.turn === null ? "Waiting for a server view" :
-        "Before turn #" + memory.turn + " · " + memory.context().length + " blocks in model context") :
+      (memory.turn === null ? "No current-turn model snapshot · idle or before first call; historical context unknown" :
+        "Call before message #" + memory.turn + " · " + memory.context().length + " exact memory blocks") :
       (memory.roots === null ? "Reading root nodes…" :
         "Level " + level + " of " + memory.maxLevel + " · " + memory.levelCount(level) +
         " nodes · L0 contains source messages; higher levels are compactions");
@@ -206,7 +206,9 @@ export function registerMemoryTree(host: MemoryTreeHost): MemoryTreeRegistration
       ...(active ? { selected: partKey(active) } : {}),
       preview: "side",
       state: tab === "level" && memory.roots === null ? "loading" : "ready",
-      empty: tab === "turn" ? "No earlier messages were in this turn's context." : "No nodes at this level.",
+      empty: tab === "turn" ?
+        (memory.turn === null ? "No current-turn model snapshot. Historical call context is unknown." :
+          "This model call used no earlier memory blocks.") : "No nodes at this level.",
       tab,
       tabs: [
         { id: "turn", label: "Turn context", count: memory.context().length },
