@@ -4,7 +4,7 @@ The public `@stencil-hq/tern@0.1.0` handshake activates this frontend after the 
 
 **Native Tern is a real device**, not a browser-only tab. It registers `device`, `computer` and `work` exactly as Term.ts does, including macOS Bonjour LocalHostName, `UNII_WORK` (default `~/.unii/work`) and the strict `UNII_COMPUTER=1` opt-in. The server's `job`/`jobs` events execute and cancel `Machine.run` through `DeviceJobs`. In-flight jobs and unacknowledged `out` actions de-duplicate on reconnect; output over `View.FRAME - 1024` bytes is replaced with a failure rather than closing the wire. Final close or a signal aborts work and calls `Machine.end` to kill child process groups. No second traditional terminal is required.
 
-The shared `View.ts` link retains server authentication, acknowledgments and replay. Normal reconnect backoff is owned by NativeChat, and its timeout is cancelled on close; the existing View MOVE code retains its immediate move semantics, with a network-free closed socket guard if its already-queued callback arrives after shutdown. Native callbacks are epoch-guarded. A hidden surface does not render; whole-surface `gone` waits for the host's visible edge when detached, or reopens a new SDK surface if still visible, with three recoveries maximum. No private wire extensions or fabricated ACKs are used.
+The shared `View.ts` link retains server authentication, acknowledgments and replay. Normal reconnect backoff is owned by NativeChat, and its timeout is cancelled on close; the existing View MOVE code retains its immediate move semantics, with a network-free closed socket guard if its already-queued callback arrives after shutdown. Native callbacks are epoch-guarded. A hidden surface does not render; whole-surface `gone` (identified by `ids` even without optional `sf`) waits for the host's visible edge when detached, or reopens a new SDK surface if still visible, with three recoveries maximum. No private wire extensions or fabricated ACKs are used.
 
 ## Integrated native OptMem Memory
 
@@ -29,8 +29,11 @@ unavailable). It does not infer active-call context from display `view.parts`.
   `unii.memory.action`, visible even while the agent is working.
 - Local composer command: `/memory` (also accepts trailing whitespace);
   consumes only its own command, never sends it as model text.
-- Modal picker ID: `layer.memory-tree`, role `unii.memory-tree`; top-level
-  `layer` of the existing `unii` surface, not a second TSP surface.
+- Modal picker logical key: `unii-memory-tree`, role `unii.memory-tree`;
+  each opening receives a unique native root `layer.memory-tree-N`. It lives
+  in the top-level `layer` of the existing session surface, never another
+  TSP surface. Closed/replaced pickers reject previously bound native actions
+  and keys; callbacks also require the current native root and surface epoch.
 - Keyboard: Tab switches current model-call context / OptMem levels;
   Up/Down selects, Left/Right changes levels, PageUp/PageDown pages,
   Enter opens summary children and Esc closes. Native picker actions also
@@ -43,9 +46,11 @@ unavailable). It does not infer active-call context from display `view.parts`.
 
 The SDK delivers **raw terminal bytes as keys**. UniiChat alone owns its
 composer text and UTF-16 caret: raw typing, fragmented Unicode, bracketed
-paste and Enter all follow the same editor/send path. Late duplicate semantic
-`onSend` events must match the current app draft, avoiding duplicate sends
-after a raw Enter already cleared it. Modal keys cannot reach the composer.
+paste and Enter all follow the same editor/send path. A semantic `SendEvent.text` is authoritative even before its `onEdit`
+callback arrives. A paired `onSend` repeating a raw Enter's already-consumed
+text is rejected, while a different full-text submission is accepted without
+clearing a newer unsent draft; a delayed full-text edit for that submitted
+text is also ignored. Modal keys cannot reach the composer.
 The original `Term.ts` plain-terminal fallback is unchanged.
 
 ### OMP acceptance on exact integration head (not executed in this chat)
@@ -69,7 +74,9 @@ It launches the actual `tsp/entry.ts` `tryTern` entry under an OS PTY
 uses the pinned SDK's real raw input stream, and connects to a disposable
 localhost Bun WebSocket/HTTP peer. It verifies ordinary typing, fragmented
 UTF-8 code points, bracketed paste with embedded newline, one exact POST
-after Enter, and local Memory keyboard actions. No credentials, provider
+after Enter, and local Memory keyboard actions. Pinned-SDK loopback tests
+add semantic full-text send/edit ordering, raw Enter duplicate rejection,
+optional-`sf` gone/detach recovery and per-open picker callback isolation. No credentials, provider
 calls, GUI, user data or live Tern pane are used.
 
 Then inspect the compiled app in an **owned** disposable headless Sway/Tern
