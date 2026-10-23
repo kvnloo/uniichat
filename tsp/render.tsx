@@ -79,7 +79,7 @@ function tool(row: Extract<Display, { type: "message" | "summary" }>, running: b
   const target = [call.head, call.device ? "on " + call.device : ""].filter(Boolean).join(" · ");
   return (
     <tool key={row.key} role="unii.tool" name={name} status={running ? "running" : "done"}
-      title={target || name} preview={call.head || undefined}
+      title={target || name}
       collapsible={call.blocks.length > 0} collapsed={call.blocks.length > 0}>
       {call.blocks.map((block, i) => (
         <col key={"arg." + i} role="unii.tool.argument">
