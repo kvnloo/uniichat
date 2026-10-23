@@ -552,6 +552,13 @@ export namespace Chat {
     const imgs = says.flatMap((say) => say.imgs);
     const server = Tools.at(chat.tools, "main");
     chat.eye = Chat.eye(mem, from);
+    // Freeze the exact built parts passed by Memory.view, before any call
+    // callback can advance the display eye (e.g. import completion).
+    const context: ModelContext = {
+      turn: from,
+      parts: chat.eye.parts.filter(([id, n]) => Memory.built(mem, Math.log2(n), id / n))
+        .map(([id, n]): Part => [id, n]),
+    };
     const bill = mem.pay?.("chat", String(msgs[0].id));
     const blocks = [...view, Tools.devices(chat.tools), Tools.at_work(chat.tools), { text: HEAD + text, mark: true }];
     const ask = { ...Chat.share(chat), searches: SEARCHES, server, blocks, imgs, bill };
@@ -559,13 +566,8 @@ export namespace Chat {
     chat.asked = true;
     chat.open = 0;
     const call = (chat.call = AskAI.ask(ask, (ev) => Chat.on(chat, null, ev)));
-    // Exactly the built memory nodes in Memory.view above, before 'from'.
-    // Capture after starting the call: display eye may change during import.
-    chat.context = {
-      turn: from,
-      parts: chat.eye.parts.filter(([id, n]) => Memory.built(mem, Math.log2(n), id / n))
-        .map(([id, n]): Part => [id, n]),
-    };
+    // Publish only for a real model call; never infer from a later display.
+    chat.context = context;
     chat.socks.forEach((sock) => Chat.show(chat, sock));
     Chat.change(chat);
     return Chat.ended(chat, call, halt);

@@ -6,7 +6,7 @@ WebSocket, a local memory copy, a new server route, or HTML scraping.
 
 - **Turn context:** the exact memory blocks frozen at the latest model call
   in the active turn, sent as `view.context: { turn, parts }`. These are
-  the built nodes from `Memory.view` at `Chat.ask` time. `view.parts`
+  the built nodes from `Memory.view` when `Chat.call` invokes `AskAI.ask`. `view.parts`
   and `view.turn` are **display-only**: imports and compaction can replace
   them independently of a model call. The server teaches the snapshot's
   nodes even when hidden from the display. An absent or `null` context
