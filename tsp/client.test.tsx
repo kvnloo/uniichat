@@ -221,6 +221,56 @@ describe("NativeChat on pinned Tern SDK with owned Unii wire", () => {
     });
   });
 
+  test("native full-text sends win before edit, but never consume a newer draft or replay raw Enter", async () => {
+    await withNative(async ({ app, tern, uploads, keys }) => {
+      const surface = tern.surfaces[0]!;
+      const composed = "IME 🧑🏽‍💻 full text";
+      // A semantic submission is authoritative even if the native edit has
+      // not arrived and the app's editor still has the old value.
+      dispatch(surface, { ev: "send", id: INPUT, text: composed });
+      await until(() => uploads.length === 1);
+      expect(uploads).toEqual([composed]);
+      expect(app.editor.text).toBe("");
+      dispatch(surface, { ev: "edit", id: INPUT, from: 0, to: 0,
+        text: composed, cursor: composed.length, len: 0 });
+      expect(app.editor.text).toBe("");
+
+      app.editor.set("newer unsent draft");
+      app.changed();
+      await tick();
+      dispatch(surface, { ev: "send", id: INPUT, text: "atomic native commit" });
+      await until(() => uploads.length === 2);
+      expect(uploads[1]).toBe("atomic native commit");
+      expect(app.editor.text).toBe("newer unsent draft");
+      dispatch(surface, { ev: "edit", id: INPUT, from: 0, to: "newer unsent draft".length,
+        text: "atomic native commit", cursor: "atomic native commit".length,
+        len: "newer unsent draft".length });
+      expect(app.editor.text).toBe("newer unsent draft");
+
+      // Actual raw bytes go through Session's KeyDecoder and the native
+      // onSend for that same submission must not send it twice.
+      keys("\r");
+      await until(() => uploads.length === 3);
+      expect(uploads[2]).toBe("newer unsent draft");
+      expect(app.editor.text).toBe("");
+      dispatch(surface, { ev: "send", id: INPUT, text: "newer unsent draft" });
+      await tick();
+      expect(uploads).toHaveLength(3);
+      // A different full-text native send is not the preceding raw draft.
+      dispatch(surface, { ev: "send", id: INPUT, text: "new authoritative prompt" });
+      await until(() => uploads.length === 4);
+      expect(uploads[3]).toBe("new authoritative prompt");
+      expect(app.editor.text).toBe("");
+      // Typing the same text again is a new submission, not a duplicate.
+      app.editor.set("newer unsent draft");
+      app.changed();
+      await tick();
+      dispatch(surface, { ev: "send", id: INPUT, text: "newer unsent draft" });
+      await until(() => uploads.length === 5);
+      expect(app.editor.text).toBe("");
+    });
+  });
+
   test("executes one job, emits bounded canonical output, cancels by jobs, and survives socket reconnect", async () => {
     const running: { signal: AbortSignal; resolve: (out: Out) => void; job: Job }[] = [];
     let cleanup = 0;
@@ -258,6 +308,36 @@ describe("NativeChat on pinned Tern SDK with owned Unii wire", () => {
       end: () => { cleanup++; },
     });
     expect(cleanup).toBe(1);
+  });
+
+  test("SDK gone-by-ids without sf recovers immediately or only on explicit visibility when hidden", async () => {
+    await withNative(async ({ app, tern, event, frames }) => {
+      const first = tern.surfaces[0]!;
+      app.editor.set("retain across detach");
+      app.changed();
+      await tick();
+      event({ ev: "gone", ids: [first.id] }); // Pinned GoneEvent.sf is optional.
+      await until(() => tern.surfaces.some(s => s.id !== first.id));
+      const second = tern.surfaces.find(s => s.id !== first.id)!;
+      expect(first.closed).toBe(true);
+      expect(second.closed).toBe(false);
+      expect(app.editor.text).toBe("retain across detach");
+      // A stale old-surface gone must not consume another recovery.
+      event({ ev: "gone", ids: [first.id] });
+      await tick();
+      expect(tern.surfaces).toHaveLength(1);
+
+      event({ ev: "visible", sf: second.id, visible: false });
+      event({ ev: "gone", ids: [second.id] });
+      await until(() => second.closed);
+      await tick();
+      expect(tern.surfaces).toHaveLength(0);
+      const beforeVisible = frames.length;
+      event({ ev: "visible", sf: second.id, visible: true });
+      await until(() => tern.surfaces.some(s => s.id !== first.id && s.id !== second.id));
+      expect(frames.length).toBeGreaterThan(beforeVisible);
+      expect(app.editor.text).toBe("retain across detach");
+    });
   });
 
   test("recovers a removed native surface without replaying actions; final close prevents new jobs", async () => {
@@ -352,7 +432,7 @@ describe("integrated native Memory on the real Tern session", () => {
       await until(() => frames.some(f => JSON.stringify(f.ops).includes("source zero")));
       // A picker action is dispatched through the real SDK callback, not
       // a private application switch statement.
-      dispatch(surface, { ev: "action", id: "layer.memory-tree", act: "refresh" });
+      dispatch(surface, { ev: "action", id: "layer.memory-tree-1", act: "refresh" });
       await until(() => received.filter(m => m.$ === "root").length >= 2);
       keys("\x1b"); // The SDK flushes a lone Escape after its real 30ms timeout.
       await Bun.sleep(60);
@@ -378,6 +458,53 @@ describe("integrated native Memory on the real Tern session", () => {
       await tick();
       dispatch(surface, { ev: "action", id: "dock.composer.bar.memory", act: "click" });
       expect(app.editor.text).toBe("still drafted");
+    });
+  });
+
+  test("each picker open owns its root and actions, rejects old callbacks and restores editor focus", async () => {
+    await withNative(async ({ app, tern, frames, received, keys }) => {
+      const surface = tern.surfaces[0]!;
+      const oldId = "layer.memory-tree-1";
+      const newId = "layer.memory-tree-2";
+      app.editor.set("preserved input");
+      app.changed();
+      await tick();
+      dispatch(surface, { ev: "action", id: "dock.composer.bar.memory", act: "click" });
+      await until(() => frames.some(f => JSON.stringify(f.ops).includes(oldId)));
+      const oldRefresh = surface.dispatch({ ev: "action", sf: surface.id,
+        id: oldId, act: "refresh", raw: {} });
+      const oldClose = surface.dispatch({ ev: "action", sf: surface.id,
+        id: oldId, act: "close", raw: {} });
+      expect(oldRefresh).toBeDefined();
+      expect(oldClose).toBeDefined();
+      const beforeClose = frames.length;
+      void oldClose?.();
+      await until(() => frames.slice(beforeClose).some(f => f.ops.some(op =>
+        Array.isArray(op) && op[0] === "focus" && op[1] === INPUT)));
+      expect(app.editor.text).toBe("preserved input");
+
+      dispatch(surface, { ev: "action", id: "dock.composer.bar.memory", act: "click" });
+      await until(() => frames.some(f => JSON.stringify(f.ops).includes(newId)));
+      const rootReads = received.filter(m => m.$ === "root").length;
+      void oldRefresh?.();
+      void oldClose?.();
+      await tick();
+      expect(received.filter(m => m.$ === "root")).toHaveLength(rootReads);
+      // Old native root is gone from the actual SDK surface's latest tree.
+      expect(surface.dispatch({ ev: "action", sf: surface.id,
+        id: oldId, act: "refresh", raw: {} })).toBeUndefined();
+      const freshRefresh = surface.dispatch({ ev: "action", sf: surface.id,
+        id: newId, act: "refresh", raw: {} });
+      expect(freshRefresh).toBeDefined();
+      void freshRefresh?.();
+      await until(() => received.filter(m => m.$ === "root").length > rootReads);
+      expect(app.editor.text).toBe("preserved input");
+      const secondClose = frames.length;
+      dispatch(surface, { ev: "action", id: newId, act: "close" });
+      await until(() => frames.slice(secondClose).some(f => f.ops.some(op =>
+        Array.isArray(op) && op[0] === "focus" && op[1] === INPUT)));
+      keys("!");
+      await until(() => app.editor.text === "preserved input!");
     });
   });
 
