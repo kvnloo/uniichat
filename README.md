@@ -153,7 +153,14 @@ Type `/` to see available slash commands; keep typing to filter.
 Up/Down selects a command, Tab completes it, and Esc dismisses the menu
 without interrupting a running reply. Enter also completes a partial
 command; press Enter again to run it. A fully typed command runs normally.
-Arguments and ordinary messages keep the usual editing and history keys.
+After the command name, the same menu completes enabled models,
+model-supported efforts/speeds, chat tabs, running agents, visible block
+IDs, import flags and known session exclusions. `/image` completes local
+image paths (including quoted/escaped spaces); `/import` completes export
+paths and successive options. Directories stay open for further completion.
+The importer still requires whitespace-free export paths. Goals, amounts,
+dates and deletion confirmations are entered manually. Ordinary messages
+keep their usual editing and history keys.
 
 Telemetry: once a day the `unii` terminal asks bend-lang.com's /check
 for the latest version (Term.ts update_check), sending its version, OS

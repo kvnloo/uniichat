@@ -27,6 +27,7 @@ import * as Paint from "./Paint.ts";
 import { type Move, Pick } from "./Pick.ts";
 import * as Screen from "./Screen.ts";
 import * as View from "./View.ts";
+import * as Complete from "./Complete.ts";
 
 // Types
 // =====
@@ -53,6 +54,7 @@ type Term = {
   imgs    : Blob[];
   flow    : Map<View.Live, number>;
   logs    : Map<string, number>;
+  importSessions : number;
   completion : { text: string; at: number; hidden: boolean };
 };
 
@@ -222,6 +224,7 @@ function term_new(url: string): Term {
     flow    : new Map(),
     logs    : new Map(),
     completion : { text: "", at: 0, hidden: false },
+    importSessions : 0,
   };
   t.scr.intercept = (key) => term_complete(t, key);
   process.stdin.on("end", () => {
@@ -361,18 +364,17 @@ function term_press(t: Term, key: string): void {
   term_draw(t);
 }
 
-// Only the first slash word completes. Arguments and messages retain
-// normal history/editing behavior; Esc dismisses without interrupting work.
-function term_matches(t: Term): Cmd[] {
+// Complete local command names and their live argument values.
+function term_matches(t: Term): Complete.Choice[] {
   const ed = t.scr.ed;
   const state = t.completion;
   if (state.text !== ed.text) {
     Object.assign(state, { text: ed.text, at: 0, hidden: false });
   }
-  if (!t.scr.tty || state.hidden || ed.pos !== ed.text.length || !/^\/[a-z]*$/.test(ed.text)) {
+  if (!t.scr.tty || state.hidden) {
     return [];
   }
-  const matches = term_commands(t.v).filter(([use]) => use.startsWith(ed.text));
+  const matches = Complete.choices(ed.text, ed.pos, term_commands(t.v).map(([use, , description]) => ({ use, description })), t.v, t.importSessions);
   state.at = Math.min(state.at, Math.max(0, matches.length - 1));
   return matches;
 }
@@ -387,11 +389,10 @@ function term_complete(t: Term, key: string): boolean {
     state.hidden = true;
   } else if (key === "Up" || key === "Down") {
     state.at = (state.at + (key === "Up" ? -1 : 1) + matches.length) % matches.length;
-  } else if (key === "Tab" || (key === "Enter" && matches[state.at][0].split(" ")[0] !== t.scr.ed.text)) {
-    const use = matches[state.at][0];
-    const text = use.split(" ")[0] + (use.includes(" ") ? " " : "");
-    Object.assign(t.scr.ed, { text, pos: text.length, moved: false });
-    Object.assign(state, { text, hidden: true });
+  } else if (key === "Tab" || (key === "Enter" && matches[state.at].text.trimEnd() !== t.scr.ed.text.trimEnd())) {
+    const choice = matches[state.at];
+    Object.assign(t.scr.ed, { text: choice.text, pos: choice.pos, moved: false });
+    Object.assign(state, { text: choice.text, at: 0, hidden: !choice.more });
   } else {
     return false;
   }
@@ -406,10 +407,10 @@ function term_suggestions(t: Term, max: number): Paint.Line[] {
   const count = Math.min(6, max - 1);
   const at = t.completion.at;
   const start = Math.max(0, Math.min(at - count + 1, matches.length - count));
-  const lines = matches.slice(start, start + count).map(([use, , text], i) => [
+  const lines = matches.slice(start, start + count).map((choice, i) => [
     Paint.Run(start + i === at ? "> " : "  ", Paint.DIM),
-    Paint.Run(use, { ...Paint.INK, b: start + i === at }),
-    Paint.Run("  " + text, Paint.DIM),
+    Paint.Run(choice.label, { ...Paint.INK, b: start + i === at }),
+    Paint.Run("  " + choice.description, Paint.DIM),
   ]);
   lines.push([Paint.Run("  ↑↓ select · Tab complete · Esc dismiss", Paint.DIM)]);
   return lines;
@@ -635,6 +636,7 @@ async function term_import(t: Term, arg: string): Promise<void> {
   }
   const old   = await done.json();
   const shown = Import.import_plan(sessions, want, old, View.view_count(t.v)).sessions;
+  t.importSessions = shown.length;
   want.off    = shown.filter((s, k) => words.includes("-#" + (k + 1))).map(Import.import_id);
   const plan  = Import.import_plan(sessions, want, old, View.view_count(t.v));
   const found = "Found " + Import.import_count(plan.msgs, "new ") + ". ";
