@@ -11,7 +11,7 @@ import { renderRows } from "./render.tsx";
 
 const INPUT = "dock.composer.line.input";
 const MEMORY_PICKER = "layer.memory-tree";
-const MEMORY_COMMAND = /^\/memory(?:\s|$)/i;
+const MEMORY_COMMAND = /^\/memory\s*$/i;
 const MAX_RECOVERIES = 3;
 
 export type NativeOptions = { device?: LocalDevice; runtime?: DeviceRuntime };
@@ -437,9 +437,9 @@ export class NativeChat {
           <row key="line" role="omp.composer.line">
             <editor key="input" role="omp.composer.input" text={this.editor.text} cursor={this.editor.cursor}
               placeholder={frame.typing ? View.HINT : "Viewing an agent"} maxLines={18} sendable={frame.typing}
-              onEdit={(ev: EditEvent) => { if (active()) this.#edit(ev); }}
+              onEdit={(ev: EditEvent) => { if (active() && this.#overlay === null) this.#edit(ev); }}
               onSend={(ev: SendEvent) => { if (active()) this.#sendText(ev.text); }}
-              onUndo={() => { if (active()) { this.editor.undo(); this.changed(); } }}
+              onUndo={() => { if (active() && this.#overlay === null) { this.editor.undo(); this.changed(); } }}
             />
           </row>
           <row key="bar" role="omp.composer.bar" align="center" gap="sm">
