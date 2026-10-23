@@ -10,7 +10,8 @@ import { projectView } from "./projection.ts";
 import { renderRows } from "./render.tsx";
 
 const INPUT = "dock.composer.line.input";
-const MEMORY_PICKER = "layer.memory-tree";
+const PICKER_PREFIX = "memory-tree-";
+const pickerId = (rootKey: string): string => "layer." + rootKey;
 const MEMORY_COMMAND = /^\/memory\s*$/i;
 const MAX_RECOVERIES = 3;
 
@@ -43,6 +44,10 @@ export class NativeChat {
   readonly #auth: Record<string, string>;
   #surface: Surface | null = null;
   #overlay: MemoryTreeOverlay | null = null;
+  #overlayRoot: string | null = null;
+  #pickerOpens = 0;
+  #lastRawSubmission: string | null = null;
+  #lateSemanticEdit: { text: string; draft: string } | null = null;
   #transportEpoch = 0;
   #detachedId: string | null = null;
   #surfaceEpoch = 0;
@@ -67,17 +72,21 @@ export class NativeChat {
         if (this.#ended || this.#overlay === overlay) return;
         this.#overlay?.onClose?.();
         this.#overlay = overlay;
+        const root = PICKER_PREFIX + ++this.#pickerOpens;
+        this.#overlayRoot = root;
         this.changed();
         // Drawing is coalesced in a microtask, so focus after the layer exists.
         queueMicrotask(() => {
-          if (this.#alive && !this.#hidden && this.#overlay === overlay && !this.#surface?.closed) {
-            this.#surface?.focus(MEMORY_PICKER);
+          if (this.#alive && !this.#hidden && this.#overlay === overlay &&
+              this.#overlayRoot === root && !this.#surface?.closed) {
+            this.#surface?.focus(pickerId(root));
           }
         });
       },
       close: (overlay) => {
         if (this.#overlay !== overlay) return;
         this.#overlay = null;
+        this.#overlayRoot = null;
         overlay.onClose?.();
         this.changed();
         queueMicrotask(() => {
@@ -139,6 +148,7 @@ export class NativeChat {
     this.#alive = false;
     this.memory.dispose();
     this.#overlay = null;
+    this.#overlayRoot = null;
     this.#surface = null;
     this.#surfaceEpoch++;
     if (this.#retry !== undefined) {
@@ -248,23 +258,31 @@ export class NativeChat {
     this.changed();
   }
 
-  #sendText(text: string): void {
-    // The SDK forwards keys and optional semantic events, not owned draft
-    // mutations. Reject late/duplicate onSend events after a prior submit.
-    if (!this.#alive || this.#overlay !== null || text !== this.editor.text) {
+  #sendText(text: string, source: "raw" | "semantic" | "button"): void {
+    if (!this.#alive || this.#overlay !== null) return;
+    // Enter can precede SDK onSend for the same draft. Suppress that stale
+    // pair, not a different authoritative SendEvent.text from native/IME.
+    // A newly typed identical draft is a distinct submission and is allowed.
+    if (source === "semantic" && this.#lastRawSubmission === text && this.editor.text !== text) {
+      this.#lastRawSubmission = null;
       return;
     }
-    // Local command: never pass it to View.view_act, the durable queue, or
-    // the model. A composer-bar action does not consume an unsent draft.
     if (MEMORY_COMMAND.test(text.trim())) {
-      this.editor.clear();
+      if (this.editor.text === text) this.editor.clear();
+      this.#lastRawSubmission = source === "raw" ? text : null;
+      this.#lateSemanticEdit = null;
       this.memory.open();
       this.changed();
       return;
     }
     const actions = View.view_act(this.view, { $: "Send", text });
-    if (actions.length > 0 && text.trim() !== "" && this.editor.text === text) {
-      this.editor.clear();
+    if (actions.length > 0 && text.trim() !== "") {
+      // Only consume the draft this event actually submitted. An older
+      // native full-text commit must not erase edits already made afterward.
+      this.#lateSemanticEdit = source === "semantic" && this.editor.text !== text ?
+        { text, draft: this.editor.text } : null;
+      this.#lastRawSubmission = source === "raw" ? text : null;
+      if (this.editor.text === text) this.editor.clear();
     }
     for (const action of actions) {
       this.#send(action, action.$ === "say" ? text : undefined);
@@ -273,7 +291,18 @@ export class NativeChat {
   }
 
   #edit(event: EditEvent): void {
+    // The native full-text SendEvent may arrive before its matching edit.
+    // Do not reinsert that already-submitted text over a still-current draft.
+    const late = this.#lateSemanticEdit;
+    if (late && this.editor.text === late.draft && event.len === late.draft.length &&
+        Number.isInteger(event.from) && Number.isInteger(event.to) &&
+        event.from >= 0 && event.to >= event.from && event.to <= late.draft.length &&
+        late.draft.slice(0, event.from) + event.text + late.draft.slice(event.to) === late.text) {
+      this.#lateSemanticEdit = null;
+      return;
+    }
     if (this.editor.edit(event)) {
+      this.#lateSemanticEdit = null;
       this.changed();
     }
   }
@@ -295,7 +324,7 @@ export class NativeChat {
     }
     const action = this.editor.key(key);
     if (action === "send") {
-      this.#sendText(this.editor.text);
+      this.#sendText(this.editor.text, "raw");
     } else if (action === "changed") {
       this.changed();
     }
@@ -319,29 +348,29 @@ export class NativeChat {
       return;
     }
     const surface = this.#surface;
-    if (surface === null || event.sf !== surface.id) {
+    if (surface === null) return;
+    // GoneEvent.sf is optional in @stencil-hq/tern. Surface removal is
+    // identified by ids, even when no sf was attached to the event.
+    if (event.ev === "gone") {
+      const ids = Array.isArray(event.ids) ? event.ids : [];
+      if (ids.includes(surface.id)) {
+        this.#detachedId = surface.id;
+        this.#surface = null;
+        this.#surfaceEpoch++;
+        // Hidden detach remains dormant until an explicit visible edge.
+        if (!this.#hidden) this.#recover();
+      } else if (event.sf === undefined || event.sf === surface.id) {
+        this.changed();
+      }
       return;
     }
+    if (event.sf !== surface.id) return;
     if (event.ev === "visible") {
       this.#hidden = event.visible === false;
       if (!this.#hidden) {
         if (this.#surface?.closed) {
           this.#recover();
         }
-        this.changed();
-      }
-    } else if (event.ev === "gone") {
-      const ids = Array.isArray(event.ids) ? event.ids : [];
-      if (ids.includes(surface.id)) {
-        this.#detachedId = surface.id;
-        this.#surface = null;
-        this.#surfaceEpoch++;
-        // A hidden pane may be detached temporarily. Wait for an explicit
-        // visible edge rather than opening a new document in the dark.
-        if (!this.#hidden) {
-          this.#recover();
-        }
-      } else {
         this.changed();
       }
     } else if (event.ev === "error") {
@@ -378,7 +407,7 @@ export class NativeChat {
     this.#detachedId = null;
     this.#draw();
     if (this.#surface === surface && !surface.closed) {
-      surface.focus(this.#overlay ? MEMORY_PICKER : INPUT);
+      surface.focus(this.#overlayRoot ? pickerId(this.#overlayRoot) : INPUT);
     }
   }
 
@@ -414,6 +443,9 @@ export class NativeChat {
     }
     const epoch = this.#surfaceEpoch;
     const active = () => this.#alive && !this.#hidden && this.#surfaceEpoch === epoch;
+    const overlay = this.#overlay;
+    const root = this.#overlayRoot;
+    const overlayActive = () => active() && this.#overlay === overlay && this.#overlayRoot === root;
     const act = (action: View.Act) => { if (active()) this.#act(action); };
     const frame = projectView(this.view);
     const navigation = {
@@ -438,7 +470,7 @@ export class NativeChat {
             <editor key="input" role="omp.composer.input" text={this.editor.text} cursor={this.editor.cursor}
               placeholder={frame.typing ? View.HINT : "Viewing an agent"} maxLines={18} sendable={frame.typing}
               onEdit={(ev: EditEvent) => { if (active() && this.#overlay === null) this.#edit(ev); }}
-              onSend={(ev: SendEvent) => { if (active()) this.#sendText(ev.text); }}
+              onSend={(ev: SendEvent) => { if (active()) this.#sendText(ev.text, "semantic"); }}
               onUndo={() => { if (active() && this.#overlay === null) { this.editor.undo(); this.changed(); } }}
             />
           </row>
@@ -447,7 +479,7 @@ export class NativeChat {
             <text key="status" spans={[{ s: "dim", t: frame.connected ? "Connected" : "Connecting…" }]} />
             <text key="memory" role="unii.memory.action" text="Memory"
               onClick={() => { if (active()) this.memory.open(); }} />
-            {frame.typing ? <text key="send" text="Send" onClick={() => { if (active()) this.#sendText(this.editor.text); }} /> : null}
+            {frame.typing ? <text key="send" text="Send" onClick={() => { if (active()) this.#sendText(this.editor.text, "button"); }} /> : null}
           </row>
         </col>,
         <status key="statusline" role="unii.status">
@@ -457,7 +489,7 @@ export class NativeChat {
           <seg key="connection" side="right" priority={4} spans={[{ t: frame.connected ? "Online" : "Offline" }]} />
         </status>,
       ],
-      layer: this.#overlay ? [this.#overlay.node(MEMORY_PICKER)] : [],
+      layer: overlay && root ? [overlay.node(root, overlayActive)] : [],
     });
   }
 }
