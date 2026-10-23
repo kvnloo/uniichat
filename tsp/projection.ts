@@ -42,7 +42,7 @@ export function projectView(view: View.View): Frame {
     main: projectRows(View.view_body(view), "main"),
     tail: projectRows(View.view_tail(view), "tail"),
     connected: view.up,
-    busy: View.view_running(view),
+    busy: view.busy,
     typing: View.view_typing(view),
     model: view.pick?.model ?? null,
     page: view.page?.name ?? null,
