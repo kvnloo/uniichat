@@ -75,6 +75,28 @@ test("a pasted box in the history keeps each key fast", () => {
   expect(performance.now() - t0).toBeLessThan(500);
 });
 
+test("cached layout follows width, Unicode edits, and history restore", () => {
+  const { scr } = screen();
+  Screen.ed_type(scr.ed, "a👩‍💻b\n界");
+  scr.ed.pos = "a👩‍💻".length;
+  const shown = (width: number) => {
+    const { lines, at } = Screen.screen_input(scr, width, 8, "", false);
+    return { rows: lines.filter((line) => line.length > 1).map((line) => line[1].x), at };
+  };
+  expect(shown(6)).toEqual({ rows: ["a👩‍💻b", "界"], at: { row: 0, col: 5 } });
+  expect(shown(5)).toEqual({ rows: ["a👩‍💻", "b", "界"], at: { row: 1, col: 2 } });
+  Screen.ed_key(scr.ed, "Backspace");
+  expect(scr.ed.text).toBe("ab\n界");
+  expect(scr.ed.pos).toBe(1);
+  expect(shown(5)).toEqual({ rows: ["ab", "界"], at: { row: 0, col: 3 } });
+  Screen.ed_take(scr.ed);
+  shown(5); // prime the empty draft's layout before restoring history
+  Screen.ed_key(scr.ed, "Up");
+  expect(shown(5)).toEqual({ rows: ["ab", "界"], at: { row: 1, col: 4 } });
+  Screen.ed_key(scr.ed, "Left");
+  expect(shown(5)).toEqual({ rows: ["ab", "界"], at: { row: 1, col: 2 } });
+});
+
 test("words: Ctrl+W, Alt+B, Alt+F", () => {
   const { scr } = screen();
   const ed = scr.ed;
