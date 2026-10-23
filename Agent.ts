@@ -38,6 +38,7 @@ import { OpenAI } from "./OpenAI.ts";
 import { Codex } from "./Codex.ts";
 import { Claude } from "./Claude.ts";
 import { Price, type Usage } from "./Price.ts";
+import { UsageLedger } from "./UsageLedger.ts";
 import { live_push } from "./View.ts";
 import { Machine, type Spec } from "./Machine.ts";
 import * as config from "./Config.ts";
@@ -253,7 +254,7 @@ export namespace Agent {
       for (let k = 1; !signal.aborted; k++) {
         await Agent.yielded(run, own, asking);
         const seen: Entry[] = [];
-        const sent = Agent.request(wire, run, key, make, cost, seen);
+        const sent = Agent.request(wire, run, key, make, cost, seen, k - 1);
         const stopped = new Promise<null>((done) => signal.addEventListener("abort", () => done(null), { once: true }));
         const got = await Promise.race([sent, stopped]);
         if (got === null) {
@@ -357,7 +358,7 @@ export namespace Agent {
   // flight (AskAI.wait); then, if paid, read to the end of its stream
   // whether the call stops or not, and billed: its response, if any, and
   // step
-  export async function request<S>(wire: Wire<S>, run: Run, key: string, make: (max: number) => unknown, cost: Cost, seen: Entry[]): Promise<{ res: Response | null; step: Step }> {
+  export async function request<S>(wire: Wire<S>, run: Run, key: string, make: (max: number) => unknown, cost: Cost, seen: Entry[], retries = 0): Promise<{ res: Response | null; step: Step }> {
     const grant = run.ask.bill ? await run.ask.bill(cost, MAX) : FREE;
     if (typeof grant === "string") {
       return { res: null, step: Agent.fail(grant, []) };
@@ -369,10 +370,11 @@ export namespace Agent {
       return { res: null, step: Agent.fail("stopped", []) };
     }
     READING.n += 1;
-    return Agent.send(wire, run, key, make(grant.max), grant, flight, seen).finally(() => (READING.n -= 1));
+    return Agent.send(wire, run, key, make(grant.max), grant, flight, seen, retries).finally(() => (READING.n -= 1));
   }
 
-  export async function send<S>(wire: Wire<S>, run: Run, key: string, body: unknown, grant: Grant, flight: Flight, seen: Entry[]): Promise<{ res: Response | null; step: Step }> {
+  export async function send<S>(wire: Wire<S>, run: Run, key: string, body: unknown, grant: Grant, flight: Flight, seen: Entry[], retries = 0): Promise<{ res: Response | null; step: Step }> {
+    const started = Date.now();
     const idle = new AbortController();
     const timer = setTimeout(() => idle.abort(new Error("no word from the API in " + wire.idle / 1e3 + " s")), wire.idle);
     const st = wire.start(run.ask);
@@ -395,6 +397,9 @@ export namespace Agent {
     }
     clearTimeout(timer);
     flight.end();
+    if (process.env.UNII_USAGE_LEDGER) {
+      UsageLedger.append(run.ask, wire.usage(st), started, retries, res?.status ?? null, step.stop, read.done, Buffer.byteLength(step.entries.filter((e) => e.kind === "unii").map((e) => e.text).join("\n").trim()));
+    }
     const { vendor, model, effort, speed } = run.ask;
     const use = res?.ok ? Agent.used(wire.usage(st), read, json) : null;
     grant.end(use && { run: { vendor, model, effort, speed }, use });
