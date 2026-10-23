@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import type { Key } from "@stencil-hq/tern";
+import { Node, type ActionEvent, type Key } from "@stencil-hq/tern";
 import type { Client } from "../../View.ts";
 import { registerMemoryTree, type MemoryTreeOverlay } from "./register.ts";
 
@@ -121,4 +121,45 @@ test("registration switches between current model call and idle without another 
   expect(h.overlay!.node("layer.unii-memory-tree")).toBeDefined();
   expect(h.sent).toEqual([{ $: "root" }]);
   feature.dispose();
+});
+
+test("reopening binds native actions to a new picker root and rejects stale owners", async () => {
+  const h = makeHost();
+  const feature = registerMemoryTree(h.host);
+  feature.open();
+  const former = h.overlay!;
+  const oldNode = former.node("memory-tree-old") as Node;
+  expect(oldNode.props["key"]).toBe("memory-tree-old");
+  const oldRefresh = oldNode.handlers?.onAction?.["refresh"];
+  const oldClose = oldNode.handlers?.onAction?.["close"];
+  expect(oldRefresh).toBeDefined();
+  const oldEvent: ActionEvent = { ev: "action", sf: "unii", id: "layer.memory-tree-old",
+    act: "refresh", raw: {} };
+  h.host.close(former);
+  feature.open();
+  const current = h.overlay!;
+  expect(current).not.toBe(former);
+  expect(current.key).toBe(former.key);
+  const freshNode = current.node("memory-tree-new") as Node;
+  expect(freshNode.props["key"]).toBe("memory-tree-new");
+  const count = h.sent.filter(msg => msg.$ === "root").length;
+  const changes = h.changes;
+  await oldRefresh?.(oldEvent);
+  await oldClose?.({ ...oldEvent, act: "close" });
+  expect(former.onKey(key("tab"))).toBe(false);
+  former.onClose?.();
+  expect(h.overlay).toBe(current);
+  expect(h.closed).toBe(1);
+  expect(h.changes).toBe(changes);
+  expect(h.sent.filter(msg => msg.$ === "root")).toHaveLength(count);
+
+  // Even a retained action from a differently keyed node in this open
+  // cannot claim the native root which was first bound for this picker.
+  const wrongNode = current.node("not-current-root") as Node;
+  await wrongNode.handlers?.onAction?.["refresh"]?.({ ...oldEvent, id: "layer.not-current-root" });
+  expect(h.sent.filter(msg => msg.$ === "root")).toHaveLength(count);
+  await freshNode.handlers?.onAction?.["refresh"]?.({ ...oldEvent, id: "layer.memory-tree-new" });
+  expect(h.sent.filter(msg => msg.$ === "root")).toHaveLength(count + 1);
+  feature.dispose();
+  expect(h.closed).toBe(2);
 });
