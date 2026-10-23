@@ -254,6 +254,7 @@ describe("NativeChat on pinned Tern SDK with owned Unii wire", () => {
       expect(uploads[2]).toBe("newer unsent draft");
       expect(app.editor.text).toBe("");
       dispatch(surface, { ev: "send", id: INPUT, text: "newer unsent draft" });
+      dispatch(surface, { ev: "send", id: INPUT, text: "newer unsent draft" });
       await tick();
       expect(uploads).toHaveLength(3);
       // A different full-text native send is not the preceding raw draft.
