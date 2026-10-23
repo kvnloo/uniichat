@@ -139,6 +139,15 @@ A self-hosted server is free: it bills no one, shows no prices, and calls
 only the model vendors. Billing.ts is the one place a hosted server
 plugs in its billing (uniichat.com sells credits; this repo has none).
 
+Set `UNII_USAGE_LEDGER` to a local JSONL file to record request metrics.
+Its parent directory must exist. Each completed request attempt records
+its role, model, effort, token counters, latency, retry index, HTTP status,
+and error category. Input excludes cached reads and cache writes. Missing
+provider usage is `null`, not an estimate. Retries are separate rows.
+The ledger excludes prompts, response text, credentials, and provider
+error messages. It is disabled by default and does not measure subscription
+quota weights or dollar charges. Protect and rotate the local file yourself.
+
 The `unii` terminal
 -------------------
 
