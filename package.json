@@ -4,7 +4,9 @@
   "scripts": {
     "test": "bun test --isolate",
     "web": "bun build web/src/main.ts --outfile web/app.js --target browser",
-    "tsp:check": "tsc --noEmit -p tsp/memory-tree/tsconfig.json"
+    "tsp:check": "bun run tsp:core:check && bun run tsp:memory:check",
+    "tsp:core:check": "tsc --noEmit -p tsp/tsconfig.json",
+    "tsp:memory:check": "tsc --noEmit -p tsp/memory-tree/tsconfig.json"
   },
   "dependencies": {
     "@stencil-hq/tern": "0.1.0"
