@@ -20,6 +20,7 @@ function makeHost() {
       expect(active).toBe(overlay);
       active = null;
       closed++;
+      overlay.onClose?.();
     },
     changed() { changes++; },
     send(message: Client) { sent.push(message); },
@@ -91,4 +92,16 @@ test("rendering the native Tern picker works with no stored memory", () => {
   h.overlay!.onKey(key("tab"));
   expect(h.overlay!.node("layer.unii-memory-tree")).toBeDefined();
   feature.dispose();
+});
+
+test("external overlay replacement releases visibility and allows reopening", () => {
+  const h = makeHost();
+  const feature = registerMemoryTree(h.host);
+  feature.open();
+  h.host.close(h.overlay!); // A stack can dismiss/recreate a sheet independently.
+  feature.open();
+  expect(h.opened).toBe(2);
+  expect(h.sent).toEqual([{ $: "root" }, { $: "root" }]);
+  feature.dispose();
+  expect(h.closed).toBe(2);
 });
