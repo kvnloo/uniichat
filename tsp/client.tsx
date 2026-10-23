@@ -267,9 +267,12 @@ export class NativeChat {
       return;
     }
     if (MEMORY_COMMAND.test(text.trim())) {
+      // The command is consumed locally even when its semantic onSend beats
+      // the native edit. Preserve a newer draft and drop that late edit.
+      this.#lateSemanticEdit = source === "semantic" && this.editor.text !== text ?
+        { text, draft: this.editor.text } : null;
       if (this.editor.text === text) this.editor.clear();
       this.#lastRawSubmission = source === "raw" ? text : null;
-      this.#lateSemanticEdit = null;
       this.memory.open();
       this.changed();
       return;
