@@ -89,3 +89,38 @@ describe("Tern native editor", () => {
     expect(ed.text).toBe("line\ntwo");
   });
 });
+
+describe("UniiChat server actions stay canonical in native mode", () => {
+  test("a prompt uses the existing binary HTTP body and empty Enter interrupts a busy turn", async () => {
+    const v = View.view_new();
+    expect(View.view_act(v, { $: "Send", text: "" })).toEqual([]);
+    v.busy = true;
+    expect(View.view_act(v, { $: "Send", text: "" })).toEqual([{ $: "stop", name: View.TURN }]);
+    const messages = View.view_act(v, { $: "Send", text: "  hello  " });
+    expect(messages).toHaveLength(1);
+    expect(messages[0]?.$).toBe("say");
+    if (messages[0]?.$ === "say") {
+      expect(messages[0].sizes).toEqual([]);
+      expect(await messages[0].body().text()).toBe("hello");
+    }
+  });
+
+  test("acks retire only the matching pending request", () => {
+    const v = View.view_new();
+    const acknowledged: string[] = [];
+    v.out.push(
+      { msg: { $: "stop", id: "one" }, ws: null, done: () => acknowledged.push("one"), said: "" },
+      { msg: { $: "stop", id: "two" }, ws: null, done: () => acknowledged.push("two"), said: "" },
+    );
+    View.view_hear(v, { $: "ack", id: "one" });
+    expect(v.out.map((p) => p.msg.id)).toEqual(["two"]);
+    expect(acknowledged).toEqual(["one"]);
+  });
+
+  test("subagent activity does not advertise a stoppable main turn", () => {
+    const v = View.view_new();
+    v.agents = ["Research"];
+    expect(View.view_running(v)).toBe(true);
+    expect(projectView(v).busy).toBe(false);
+  });
+});
