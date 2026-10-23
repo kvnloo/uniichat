@@ -5,10 +5,13 @@ import type { EditEvent, Key, SendEvent, Session, Surface } from "@stencil-hq/te
 import * as View from "../View.ts";
 import { DeviceJobs, localDevice, type DeviceRuntime, type LocalDevice } from "./device.ts";
 import { Editor } from "./editor.ts";
+import { registerMemoryTree, type MemoryTreeOverlay, type MemoryTreeRegistration } from "./memory-tree/register.ts";
 import { projectView } from "./projection.ts";
 import { renderRows } from "./render.tsx";
 
 const INPUT = "dock.composer.line.input";
+const MEMORY_PICKER = "layer.memory-tree";
+const MEMORY_COMMAND = /^\/memory(?:\s|$)/i;
 const MAX_RECOVERIES = 3;
 
 export type NativeOptions = { device?: LocalDevice; runtime?: DeviceRuntime };
@@ -34,10 +37,13 @@ export class NativeChat {
   readonly view = View.view_new();
   readonly editor = new Editor();
   readonly device: DeviceJobs;
+  readonly memory: MemoryTreeRegistration;
   readonly #tern: Session;
   readonly #url: string;
   readonly #auth: Record<string, string>;
   #surface: Surface | null = null;
+  #overlay: MemoryTreeOverlay | null = null;
+  #transportEpoch = 0;
   #detachedId: string | null = null;
   #surfaceEpoch = 0;
   #recoveries = 0;
@@ -54,6 +60,35 @@ export class NativeChat {
     this.#url = url.replace(/\/$/, "");
     this.#auth = { ...auth };
     this.device = new DeviceJobs(this.view, (msg) => this.#send(msg), options.device ?? localDevice(), options.runtime);
+    // One explorer for the lifetime of the client. The host owns the modal
+    // layer and focus; the explorer owns its data and native picker actions.
+    this.memory = registerMemoryTree({
+      open: (overlay) => {
+        if (this.#ended || this.#overlay === overlay) return;
+        this.#overlay?.onClose?.();
+        this.#overlay = overlay;
+        this.changed();
+        // Drawing is coalesced in a microtask, so focus after the layer exists.
+        queueMicrotask(() => {
+          if (this.#alive && !this.#hidden && this.#overlay === overlay && !this.#surface?.closed) {
+            this.#surface?.focus(MEMORY_PICKER);
+          }
+        });
+      },
+      close: (overlay) => {
+        if (this.#overlay !== overlay) return;
+        this.#overlay = null;
+        overlay.onClose?.();
+        this.changed();
+        queueMicrotask(() => {
+          if (this.#alive && !this.#hidden && this.#overlay === null && !this.#surface?.closed) {
+            this.#surface?.focus(INPUT);
+          }
+        });
+      },
+      changed: () => this.changed(),
+      send: (message) => this.#send(message),
+    });
   }
 
   async run(): Promise<void> {
@@ -102,6 +137,8 @@ export class NativeChat {
     }
     this.#ended = true;
     this.#alive = false;
+    this.memory.dispose();
+    this.#overlay = null;
     this.#surface = null;
     this.#surfaceEpoch++;
     if (this.#retry !== undefined) {
@@ -126,9 +163,15 @@ export class NativeChat {
       return;
     }
     View.link_open(this.view, {
-      open: (query) => this.#alive
-        ? new WebSocket(this.#url.replace(/^http/, "ws") + "/ws" + query + this.device.query, { headers: this.#auth } as any)
-        : closedSocket(),
+      open: (query) => {
+        if (!this.#alive) return closedSocket();
+        // View.link_open calls open() for every physical socket, including
+        // the immediate MOVE path it owns itself. Reset before that socket
+        // can deliver its authoritative join view, never after the join.
+        if (this.#transportEpoch++ > 0) this.memory.reconnect();
+        return new WebSocket(this.#url.replace(/^http/, "ws") + "/ws" + query + this.device.query,
+          { headers: this.#auth } as any);
+      },
       post: (path, body) => fetch(this.#url + path, { method: "POST", headers: this.#auth, body }),
       hear: (msg) => {
         if (!this.#alive) {
@@ -140,6 +183,9 @@ export class NativeChat {
         if (msg.$ === "job" || msg.$ === "jobs") {
           this.device.hear(msg);
         }
+        // Preserve the actual server sequence: know before view, root and
+        // zoom. In particular, forward view.context without reconstruction.
+        this.memory.hear(msg);
         this.changed();
       },
       lost: async (up) => {
@@ -203,7 +249,17 @@ export class NativeChat {
   }
 
   #sendText(text: string): void {
-    if (!this.#alive) {
+    // The SDK forwards keys and optional semantic events, not owned draft
+    // mutations. Reject late/duplicate onSend events after a prior submit.
+    if (!this.#alive || this.#overlay !== null || text !== this.editor.text) {
+      return;
+    }
+    // Local command: never pass it to View.view_act, the durable queue, or
+    // the model. A composer-bar action does not consume an unsent draft.
+    if (MEMORY_COMMAND.test(text.trim())) {
+      this.editor.clear();
+      this.memory.open();
+      this.changed();
       return;
     }
     const actions = View.view_act(this.view, { $: "Send", text });
@@ -225,6 +281,12 @@ export class NativeChat {
   #key(key: Key): void {
     if (key.ctrl && key.name === "d") {
       this.stop();
+      return;
+    }
+    // A modal picker consumes *all* ordinary raw keys. Typed bytes must
+    // never leak into the composer or submit while Memory is showing.
+    if (this.#overlay !== null) {
+      this.#overlay.onKey(key);
       return;
     }
     if (key.ctrl && key.name === "c") {
@@ -316,7 +378,7 @@ export class NativeChat {
     this.#detachedId = null;
     this.#draw();
     if (this.#surface === surface && !surface.closed) {
-      surface.focus(INPUT);
+      surface.focus(this.#overlay ? MEMORY_PICKER : INPUT);
     }
   }
 
@@ -383,6 +445,8 @@ export class NativeChat {
           <row key="bar" role="omp.composer.bar" align="center" gap="sm">
             <text key="model" spans={[{ s: "muted", t: frame.model ?? "UniiChat" }]} />
             <text key="status" spans={[{ s: "dim", t: frame.connected ? "Connected" : "Connecting…" }]} />
+            <text key="memory" role="unii.memory.action" text="Memory"
+              onClick={() => { if (active()) this.memory.open(); }} />
             {frame.typing ? <text key="send" text="Send" onClick={() => { if (active()) this.#sendText(this.editor.text); }} /> : null}
           </row>
         </col>,
@@ -393,6 +457,7 @@ export class NativeChat {
           <seg key="connection" side="right" priority={4} spans={[{ t: frame.connected ? "Online" : "Offline" }]} />
         </status>,
       ],
+      layer: this.#overlay ? [this.#overlay.node(MEMORY_PICKER)] : [],
     });
   }
 }
