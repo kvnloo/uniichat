@@ -121,7 +121,9 @@ export class MemoryTree {
       }
       case "zoom": {
         const parent: Part = [message.id, message.n];
-        if (!validPart(parent) || parent[1] === 1) return false;
+        // A previous socket epoch or a different UI may receive a zoom too.
+        // Only a request from this explorer may disclose descendants here.
+        if (!validPart(parent) || parent[1] === 1 || !this.pending.has(partKey(parent))) return false;
         const children = parts(message.parts);
         const half = parent[1] / 2;
         if (children.length !== 2 ||
