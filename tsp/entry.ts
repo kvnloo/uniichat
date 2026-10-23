@@ -7,9 +7,10 @@ import { NativeChat } from "./client.tsx";
 export async function tryTern(
   url: string,
   authorization: Record<string, string>,
+  version: string,
   negotiate: typeof connect = connect,
 ): Promise<boolean> {
-  const session = await negotiate({ app: "unii", features: ["edit", "undo", "send"] });
+  const session = await negotiate({ app: "unii", version, features: ["edit", "undo", "send"] });
   if (!session) {
     return false;
   }
