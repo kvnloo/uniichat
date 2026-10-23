@@ -23,6 +23,10 @@ import { GLYPH, WHO } from "./Theme.ts";
 // the n messages from id on (n a power of two)
 export type Part = [number, number];
 
+// Frozen at an actual model call. Null means no current-turn model snapshot;
+// earlier call inputs cannot be reconstructed from the display projection.
+export type ModelContext = { turn: number; parts: Part[] };
+
 // a message logged: its kind, its text, its date (ISO), its images
 export type Entry = { kind: Kind; text: string; date?: string; images?: string[] };
 
@@ -99,7 +103,7 @@ export type Pack = { nodes?: Record<string, Node>; whole?: Record<string, Entry>
 // the server's messages (Server.ts documents them)
 export type Server =
   | ({ $: "know" } & Pack)
-  | { $: "view"; parts: Part[]; turn: number }
+  | { $: "view"; parts: Part[]; turn: number; context?: ModelContext | null }
   | { $: "zoom"; id: number; n: number; parts: Part[] }
   | { $: "root"; parts: Part[] }
   | ({ $: "entry"; agent?: string; id?: number } & Entry)
