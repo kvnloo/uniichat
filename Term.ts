@@ -1129,6 +1129,9 @@ if (HELP || ODD !== undefined) {
   if (SERVER !== OURS) {
     self_mark();
   }
-  const t = term_new(SERVER);
-  term_connect(t);
+  // TSP negotiation is optional. No Tern host: keep all existing terminal behavior.
+  if (!await (await import("./tsp/entry.ts")).tryTern(SERVER, term_auth())) {
+    const t = term_new(SERVER);
+    term_connect(t);
+  }
 }
