@@ -10,7 +10,7 @@ import { MemoryTree, PAGE_SIZE, partKey, partLevel } from "./model.ts";
 export interface MemoryTreeOverlay {
   readonly key: string;
   readonly modal: true;
-  node(id: string): JSX.Element;
+  node(rootKey: string, isCurrent?: () => boolean): JSX.Element;
   onKey(key: Key): boolean;
   onClose?(): void;
 }
@@ -53,6 +53,7 @@ export function registerMemoryTree(host: MemoryTreeHost): MemoryTreeRegistration
   const memory = new MemoryTree(message => host.send(message));
   let visible = false;
   let disposed = false;
+  let overlay: MemoryTreeOverlay | null = null;
   let tab: Tab = "turn";
   let level = 0;
   let page = 0;
@@ -60,7 +61,7 @@ export function registerMemoryTree(host: MemoryTreeHost): MemoryTreeRegistration
 
   const pageCount = () => tab === "turn" ? memory.contextPages() : memory.levelPages(level);
   const shown = (): Part[] => tab === "turn" ? memory.contextAt(page) : memory.levelAt(level, page);
-  const current = (): Part | null => shown().find(p => partKey(p) === selected) ?? shown()[0] ?? null;
+  const currentPart = (): Part | null => shown().find(p => partKey(p) === selected) ?? shown()[0] ?? null;
 
   const reconcile = () => {
     page = Math.min(page, pageCount() - 1);
@@ -82,7 +83,7 @@ export function registerMemoryTree(host: MemoryTreeHost): MemoryTreeRegistration
     refresh();
   };
 
-  const setLevel = (next: number, anchor = current()?.[0] ?? 0) => {
+  const setLevel = (next: number, anchor = currentPart()?.[0] ?? 0) => {
     if (!memory.roots) {
       tab = "level";
       level = 0;
@@ -120,9 +121,11 @@ export function registerMemoryTree(host: MemoryTreeHost): MemoryTreeRegistration
   };
 
   const close = () => {
-    if (!visible) return;
+    const current = overlay;
+    if (!visible || current === null) return;
     visible = false;
-    host.close(overlay);
+    overlay = null;
+    host.close(current);
   };
 
   const preview = (part: Part | null): JSX.Element[] => {
@@ -155,10 +158,10 @@ export function registerMemoryTree(host: MemoryTreeHost): MemoryTreeRegistration
     ];
   };
 
-  const panel = (): JSX.Element => {
+  const panel = (rootKey: string, current: () => boolean): JSX.Element => {
     reconcile();
     const list = shown();
-    const active = current();
+    const active = currentPart();
     const items: PickerItem[] = list.map(p => {
       const detail = memory.detail(p);
       return {
@@ -194,7 +197,7 @@ export function registerMemoryTree(host: MemoryTreeHost): MemoryTreeRegistration
       { id: "close", keys: ["esc"], label: "Close", end: true },
     ];
     return node("picker", {
-      key: "memory-tree",
+      key: rootKey,
       role: "unii.memory-tree",
       icon: "history",
       title,
@@ -215,30 +218,47 @@ export function registerMemoryTree(host: MemoryTreeHost): MemoryTreeRegistration
         { id: "level", label: "Levels", count: memory.levelCount(level) },
       ],
       actions,
-      onSelect: (event: { item: string }) => select(event.item),
-      onActivate: (event: { item: string }) => activate(list.find(p => partKey(p) === event.item) ?? null),
+      onSelect: (event: { item: string }) => { if (current()) select(event.item); },
+      onActivate: (event: { item: string }) => {
+        if (current()) activate(list.find(p => partKey(p) === event.item) ?? null);
+      },
       onAction: {
-        tab: (event: { value: string }) => setTab(event.value === "level" ? "level" : "turn"),
-        previous: () => movePage(-1),
-        next: () => movePage(1),
-        coarser: () => setLevel(level + 1),
-        finer: () => setLevel(level - 1),
-        open: () => activate(current()),
+        tab: (event: { value: string }) => { if (current()) setTab(event.value === "level" ? "level" : "turn"); },
+        previous: () => { if (current()) movePage(-1); },
+        next: () => { if (current()) movePage(1); },
+        coarser: () => { if (current()) setLevel(level + 1); },
+        finer: () => { if (current()) setLevel(level - 1); },
+        open: () => { if (current()) activate(currentPart()); },
         refresh: () => {
+          if (!current()) return;
           memory.requestRoots();
           refresh();
         },
-        close,
+        close: () => { if (current()) close(); },
       },
     }, preview(active));
   };
 
-  const overlay: MemoryTreeOverlay = {
-    key: "unii-memory-tree",
-    modal: true,
-    onClose: () => { visible = false; },
-    node: () => panel(),
-    onKey: (key: Key) => {
+  // Fresh callback owner on every open; the logical overlay key remains stable.
+  const makeOverlay = (): MemoryTreeOverlay => {
+    let boundRoot: string | null = null;
+    const instance: MemoryTreeOverlay = {
+      key: "unii-memory-tree",
+      modal: true,
+      onClose: () => {
+        if (overlay === instance) {
+          visible = false;
+          overlay = null;
+        }
+      },
+      node: (rootKey, isCurrent = () => true) => {
+        boundRoot ??= rootKey;
+        const current = () => !disposed && visible && overlay === instance &&
+          boundRoot === rootKey && isCurrent();
+        return panel(rootKey, current);
+      },
+      onKey: (key: Key) => {
+        if (disposed || !visible || overlay !== instance) return false;
       if (key.name === "escape") {
         close();
       } else if (key.name === "tab") {
@@ -248,7 +268,7 @@ export function registerMemoryTree(host: MemoryTreeHost): MemoryTreeRegistration
       } else if (key.name === "page_down") {
         movePage(1);
       } else if (key.name === "enter" || (key.name === "right" && tab === "turn")) {
-        activate(current());
+        activate(currentPart());
       } else if (tab === "level" && key.name === "left") {
         setLevel(level + 1);
       } else if (tab === "level" && key.name === "right") {
@@ -266,17 +286,21 @@ export function registerMemoryTree(host: MemoryTreeHost): MemoryTreeRegistration
         host.changed();
       }
       return true;
-    },
+      },
+    };
+    return instance;
   };
 
   return {
     open: () => {
       if (disposed || visible) return;
       visible = true;
+      const fresh = makeOverlay();
+      overlay = fresh;
       tab = "turn";
       page = memory.contextPages() - 1;
       selected = null;
-      host.open(overlay);
+      host.open(fresh);
       memory.requestRoots();
       refresh();
     },
