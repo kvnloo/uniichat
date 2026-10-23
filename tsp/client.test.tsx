@@ -462,6 +462,24 @@ describe("integrated native Memory on the real Tern session", () => {
     });
   });
 
+  test("semantic local memory command before its edit never enters the composer or model", async () => {
+    await withNative(async ({ app, tern, frames, received, uploads }) => {
+      const surface = tern.surfaces[0]!;
+      dispatch(surface, { ev: "send", id: INPUT, text: "/memory" });
+      await until(() => received.some(m => m.$ === "root") &&
+        frames.some(f => JSON.stringify(f.ops).includes("layer.memory-tree-1")));
+      expect(app.editor.text).toBe("");
+      const count = frames.length;
+      dispatch(surface, { ev: "action", id: "layer.memory-tree-1", act: "close" });
+      await until(() => frames.slice(count).some(f => f.ops.some(op =>
+        Array.isArray(op) && op[0] === "focus" && op[1] === INPUT)));
+      dispatch(surface, { ev: "edit", id: INPUT, from: 0, to: 0,
+        text: "/memory", cursor: 7, len: 0 });
+      expect(app.editor.text).toBe("");
+      expect(uploads).toHaveLength(0);
+    });
+  });
+
   test("each picker open owns its root and actions, rejects old callbacks and restores editor focus", async () => {
     await withNative(async ({ app, tern, frames, received, keys }) => {
       const surface = tern.surfaces[0]!;
