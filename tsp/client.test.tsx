@@ -323,6 +323,12 @@ describe("integrated native Memory on the real Tern session", () => {
       await until(() => received.some(m => m.$ === "root"));
       expect(tern.surfaces).toHaveLength(1);
       expect(app.editor.text).toBe("unsent");
+      keys("blocked while modal");
+      await tick();
+      expect(app.editor.text).toBe("unsent");
+      dispatch(surface, { ev: "edit", id: INPUT, from: 6, to: 6,
+        text: "X", cursor: 7, len: 6 });
+      expect(app.editor.text).toBe("unsent");
 
       send({ $: "know",
         nodes: { "0+2": { text: "first compact", to: "2026-10-21" },
