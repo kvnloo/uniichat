@@ -259,33 +259,33 @@ export function registerMemoryTree(host: MemoryTreeHost): MemoryTreeRegistration
       },
       onKey: (key: Key) => {
         if (disposed || !visible || overlay !== instance) return false;
-      if (key.name === "escape") {
-        close();
-      } else if (key.name === "tab") {
-        setTab(tab === "turn" ? "level" : "turn");
-      } else if (key.name === "page_up") {
-        movePage(-1);
-      } else if (key.name === "page_down") {
-        movePage(1);
-      } else if (key.name === "enter" || (key.name === "right" && tab === "turn")) {
-        activate(currentPart());
-      } else if (tab === "level" && key.name === "left") {
-        setLevel(level + 1);
-      } else if (tab === "level" && key.name === "right") {
-        setLevel(level - 1);
-      } else if (key.name === "up" || key.name === "down") {
-        const all = shown().map(partKey);
-        const at = Math.max(0, all.indexOf(selected ?? ""));
-        selected = all[Math.max(0, Math.min(all.length - 1, at + (key.name === "down" ? 1 : -1)))] ?? null;
-        host.changed();
-      } else if (key.name === "home") {
-        selected = shown().length ? partKey(shown()[0]!) : null;
-        host.changed();
-      } else if (key.name === "end") {
-        selected = shown().length ? partKey(shown().at(-1)!) : null;
-        host.changed();
-      }
-      return true;
+        if (key.name === "escape") {
+          close();
+        } else if (key.name === "tab") {
+          setTab(tab === "turn" ? "level" : "turn");
+        } else if (key.name === "page_up") {
+          movePage(-1);
+        } else if (key.name === "page_down") {
+          movePage(1);
+        } else if (key.name === "enter" || (key.name === "right" && tab === "turn")) {
+          activate(currentPart());
+        } else if (tab === "level" && key.name === "left") {
+          setLevel(level + 1);
+        } else if (tab === "level" && key.name === "right") {
+          setLevel(level - 1);
+        } else if (key.name === "up" || key.name === "down") {
+          const all = shown().map(partKey);
+          const at = Math.max(0, all.indexOf(selected ?? ""));
+          selected = all[Math.max(0, Math.min(all.length - 1, at + (key.name === "down" ? 1 : -1)))] ?? null;
+          host.changed();
+        } else if (key.name === "home") {
+          selected = shown().length ? partKey(shown()[0]!) : null;
+          host.changed();
+        } else if (key.name === "end") {
+          selected = shown().length ? partKey(shown().at(-1)!) : null;
+          host.changed();
+        }
+        return true;
       },
     };
     return instance;
