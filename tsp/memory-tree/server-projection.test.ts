@@ -1,33 +1,62 @@
-// Real Chat.show/Chat.eye projections; no sockets, network, or user storage.
+// Real Chat.eye/Chat.show projections in a disposable Bun subprocess.
+// A runtime import of Server.ts in this test would drag the legacy backend
+// into the strict native module compiler profile. Keep the real assertions.
 import { expect, test } from "bun:test";
-import { Chat } from "../../Server.ts";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
 import { MemoryTree } from "./model.ts";
-import type { Server, Part } from "../../View.ts";
+import type { Part, Server } from "../../View.ts";
 
-// Mark nodes as taught to isolate the server's real display projection from
-// Memory.message's disk lookup. Other tests cover summary/source retrieval.
-function project(chat: Parameters<typeof Chat.show>[0]): Server {
-  const delivered: Server[] = [];
-  const seen = new Set(["0+4", "4+4", "0+8", "8+8", "0+16"]);
-  const sock = {
-    data: { seen },
-    send(body: string) { delivered.push(JSON.parse(body) as Server); },
-  } as unknown as Parameters<typeof Chat.show>[1];
-  Chat.show(chat, sock);
-  const view = delivered.find(msg => msg.$ === "view");
-  if (view === undefined) throw new Error("Chat.show did not send a view");
-  return view;
+type Projections = {
+  eye: Part[];
+  during: Server;
+  after: Server;
+  compacted: Server;
+  idle: Server;
+  reload: Server;
+};
+
+const OUTPUT = "UNII_MEMORY_PROJECTIONS:";
+let pending: Promise<Projections> | undefined;
+
+async function projectWithRealServer(): Promise<Projections> {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "unii-memory-projection-"));
+  const data = path.join(dir, "data");
+  const home = path.join(dir, "home");
+  fs.mkdirSync(data);
+  fs.mkdirSync(home);
+  try {
+    const proc = Bun.spawn([process.execPath, import.meta.dir + "/server-projection.child.mjs"], {
+      env: { ...process.env, UNII_DIR: data, UNII_HOME: home },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([
+      Bun.readableStreamToText(proc.stdout),
+      Bun.readableStreamToText(proc.stderr),
+      proc.exited,
+    ]);
+    if (exitCode !== 0) {
+      throw new Error("real Server.ts projection exited " + exitCode + ":\n" + stderr + "\n" + stdout);
+    }
+    const line = stdout.split("\n").find(text => text.startsWith(OUTPUT));
+    if (line === undefined) {
+      throw new Error("real Server.ts projection did not report a snapshot:\n" + stderr + "\n" + stdout);
+    }
+    return JSON.parse(line.slice(OUTPUT.length)) as Projections;
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 }
 
-test("server projection keeps the real model eye through an overlapping import", () => {
-  const mem = { count: 16, view: { parts: [{ l: 2, i: 0 }, { l: 2, i: 1 }] } };
-  const eye = Chat.eye(mem as unknown as Parameters<typeof Chat.eye>[0], 8);
-  expect(eye.parts).toEqual([[0, 4], [4, 4]]);
-  const context = { turn: 8, parts: eye.parts.map(([id, n]): Part => [id, n]) };
-  const chat = {
-    mem, eye, context, busy: true, batch: { a: 8, b: 16 },
-  } as unknown as Parameters<typeof Chat.show>[0];
-  const during = project(chat);
+function realProjections(): Promise<Projections> {
+  return pending ??= projectWithRealServer();
+}
+
+test("server projection keeps the real model eye through an overlapping import", async () => {
+  const { eye, during, after } = await realProjections();
+  expect(eye).toEqual([[0, 4], [4, 4]]);
   expect(during).toEqual({
     $: "view", parts: [[0, 16]], turn: 8,
     context: { turn: 8, parts: [[0, 4], [4, 4]] },
@@ -36,11 +65,7 @@ test("server projection keeps the real model eye through an overlapping import",
   tree.hear(during);
   expect(tree.context()).toEqual([[0, 4], [4, 4]]);
 
-  // Chat.digest advances chat.eye, but does not run the model again.
-  mem.view.parts = [{ l: 4, i: 0 }];
-  (chat as { batch: unknown }).batch = null;
-  (chat as { eye: typeof eye }).eye = Chat.eye(mem as unknown as Parameters<typeof Chat.eye>[0], 16);
-  const after = project(chat);
+  // Chat.digest advances the display eye, but does not run the model again.
   expect(after).toEqual({
     $: "view", parts: [[0, 16]], turn: 16,
     context: { turn: 8, parts: [[0, 4], [4, 4]] },
@@ -50,29 +75,18 @@ test("server projection keeps the real model eye through an overlapping import",
   expect(tree.context()).toEqual([[0, 4], [4, 4]]);
 });
 
-test("compaction, reconnect and idle/reload have non-fabricated context", () => {
-  const mem = { count: 16, view: { parts: [{ l: 4, i: 0 }] } };
-  const eye = Chat.eye(mem as unknown as Parameters<typeof Chat.eye>[0], 16);
-  const chat = {
-    mem, eye, busy: true, batch: null,
-    context: { turn: 16, parts: [[0, 16]] as Part[] },
-  } as unknown as Parameters<typeof Chat.show>[0];
+test("compaction, reconnect and idle/reload have non-fabricated context", async () => {
+  const { compacted, idle, reload } = await realProjections();
   const tree = new MemoryTree(() => {});
-  tree.hear(project(chat));
+  tree.hear(compacted);
   expect(tree.context()).toEqual([[0, 16]]);
   tree.reconnect();
   expect(tree.context()).toEqual([]); // Disconnected snapshot is not current.
-  tree.hear(project(chat)); // Rejoin receives the authoritative snapshot.
+  tree.hear(compacted); // Rejoin receives the authoritative snapshot.
   expect(tree.context()).toEqual([[0, 16]]);
 
-  (chat as { busy: boolean }).busy = false;
-  (chat as { context: unknown }).context = null;
-  tree.hear(project(chat));
+  tree.hear(idle);
   expect(tree.turn).toBeNull();
   expect(tree.context()).toEqual([]);
-  const reload = {
-    mem, eye: Chat.eye(mem as unknown as Parameters<typeof Chat.eye>[0], 16),
-    busy: false, batch: null, context: null,
-  } as unknown as Parameters<typeof Chat.show>[0];
-  expect(project(reload)).toMatchObject({ $: "view", context: null });
+  expect(reload).toMatchObject({ $: "view", context: null });
 });

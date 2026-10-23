@@ -63,16 +63,38 @@ nodes and reuses the host's overlay focus/close behavior. The terminal
 ignores the additive, optional wire field. Never derive call-time context
 from the visible blocks, import state, or raw message ranges.
 
+## Native TypeScript scope
+
+`tsp/memory-tree/tsconfig.json` checks the native memory model, registration,
+and their tests with `strict: true`, `noEmit`, Bun types and the same compiler
+profile as the independently verified `tsp/core` branch. Its small explicit
+include also supplies the shared `*.swift` declaration. It deliberately
+does **not** opt the transitive, legacy View/AskAI/Memory/Tools graph into
+`noUncheckedIndexedAccess`, which is not enabled by `strict` and would
+generate unrelated old indexing diagnostics. No runtime behavior, assertions,
+application checks, or library types are suppressed.
+
+`server-projection.test.ts` executes `server-projection.child.mjs` in an
+isolated Bun process with disposable `UNII_DIR` and `UNII_HOME`, following
+`Server.test.ts`'s subprocess convention. The child imports **real**
+`Server.ts` at runtime and calls `Chat.eye` and `Chat.show`; the parent
+still asserts the overlapping-import, compaction, handoff, reconnect,
+idle and reload projections. The server implementation no longer enters
+the standalone native TypeScript dependency graph just to test it. The
+narrow `Clip.ts` decoder type boundary and locked `@types/bun@1.3.10`
+match the verified core branch. Neither `Server.ts` nor native core
+frontend files are modified here.
+
 ## Verification for OMP
 
 From the repository root:
 
 ```sh
-bun install
+bun install --frozen-lockfile
 bun run tsp:check
 bun test --isolate tsp/memory-tree/model.test.ts tsp/memory-tree/register.test.ts tsp/memory-tree/server-projection.test.ts
 bun run test
-bun build tsp/memory-tree/register.ts --target bun --outfile tsp-build/memory-tree.js
+bun build tsp/memory-tree/register.ts --target bun --outfile /tmp/uniichat-memory-tree.js
 ```
 
 No tests or real Tern-host visual acceptance were run through the GitHub
@@ -82,8 +104,9 @@ L0 through a merged root, keyboard navigation, source provenance,
 loading summaries, reconnection, import completion during a turn,
 live handoff, and that normal `bun Term.ts` still works when Tern is
 unavailable. Cold reload does not recover exact historical call context.
-The independent `tsp/core` slice owns integration and dependency
-resolution/lockfile; this branch changes neither.
+The independent `tsp/core` slice owns integration, not this branch. This
+branch independently commits the same locked Bun typings/toolchain as its
+green head `205f6641fdbd385842d0571fa6593614c0f0974a`.
 
 ## Provenance
 

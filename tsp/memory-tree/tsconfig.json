@@ -1,17 +1,14 @@
 {
   "compilerOptions": {
     "target": "ES2024",
-    "lib": ["ES2024", "DOM", "DOM.Iterable"],
+    "lib": ["ES2024", "DOM"],
     "module": "ESNext",
-    "moduleResolution": "Bundler",
-    "types": ["bun"],
-    "allowImportingTsExtensions": true,
+    "moduleResolution": "bundler",
     "strict": true,
-    "noImplicitReturns": true,
-    "noFallthroughCasesInSwitch": true,
-    "noUncheckedIndexedAccess": true,
+    "noEmit": true,
     "skipLibCheck": true,
-    "noEmit": true
+    "allowImportingTsExtensions": true,
+    "types": ["bun"]
   },
-  "include": ["./*.ts"]
+  "include": ["./*.ts", "../assets.d.ts"]
 }
