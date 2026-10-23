@@ -358,10 +358,11 @@ describe("integrated native Memory on the real Tern session", () => {
 
       // The slash command is local, consumes itself, and opens the same
       // picker. No say upload or model-visible command is ever produced.
+      const rootsBeforeCommand = received.filter(m => m.$ === "root").length;
       app.editor.set("/memory");
       app.changed();
       keys("\r");
-      await until(() => received.filter(m => m.$ === "root").length >= 2);
+      await until(() => received.filter(m => m.$ === "root").length > rootsBeforeCommand);
       expect(uploads).toEqual([]);
       expect(app.editor.text).toBe("");
       keys("\x1b");
