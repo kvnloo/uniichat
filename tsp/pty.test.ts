@@ -99,20 +99,22 @@ async function withPty(check: (ctx: {
       cwd: ROOT, env, stdin: "pipe", stdout: "pipe", stderr: "inherit",
     });
     const owned = proc;
-    if (!owned.stdin || typeof owned.stdin === "number" ||
-        !owned.stdout || typeof owned.stdout === "number") {
+    const input = owned.stdin;
+    const stdout = owned.stdout;
+    if (!input || typeof input === "number" ||
+        !stdout || typeof stdout === "number") {
       throw new Error("script did not provide owned PTY pipes");
     }
     const send = async (data: Uint8Array): Promise<void> => {
-      owned.stdin.write(data);
-      await owned.stdin.flush();
+      input.write(data);
+      await input.flush();
     };
     const decoder = new TextDecoder();
     let output = "";
     let scan = 0;
     let ackWrites = Promise.resolve();
     pump = (async () => {
-      for await (const chunk of owned.stdout) {
+      for await (const chunk of stdout) {
         output += decoder.decode(chunk, { stream: true });
         // ACK only frames the OS PTY actually produced. No fabricated
         // application ACKs or session-credits to bypass Tern flow control.
