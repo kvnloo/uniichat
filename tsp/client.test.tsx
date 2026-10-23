@@ -340,6 +340,14 @@ describe("integrated native Memory on the real Tern session", () => {
       await until(() => received.some(m => m.$ === "zoom" &&
         JSON.stringify(m.part) === "[0,4]"));
       send({ $: "zoom", id: 0, n: 4, parts: [[0, 2], [2, 2]] });
+      await until(() => received.some(m => m.$ === "zoom" &&
+        JSON.stringify(m.part) === "[0,2]"));
+      send({ $: "zoom", id: 0, n: 2, parts: [[0, 1], [1, 1]] });
+      await until(() => frames.some(f => JSON.stringify(f.ops).includes("source zero")));
+      // A picker action is dispatched through the real SDK callback, not
+      // a private application switch statement.
+      dispatch(surface, { ev: "action", id: "layer.memory-tree", act: "refresh" });
+      await until(() => received.filter(m => m.$ === "root").length >= 2);
       keys("\x1b"); // The SDK flushes a lone Escape after its real 30ms timeout.
       await Bun.sleep(60);
       expect(app.editor.text).toBe("unsent");
