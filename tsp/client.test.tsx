@@ -24,6 +24,30 @@ async function until(ready: () => boolean, ms = 3500): Promise<void> {
 type WireMessage = Record<string, unknown>;
 type Frame = { sf: string; s: number; ops: unknown[] };
 
+// Native frames contain deltas, not a repeated full snapshot of streamed text.
+function renderedText(frames: readonly Frame[], id: string): string | undefined {
+  let text: string | undefined;
+  const visit = (value: unknown): void => {
+    if (typeof value !== "object" || value === null) return;
+    if ("id" in value && value.id === id && "p" in value &&
+        typeof value.p === "object" && value.p !== null &&
+        "text" in value.p && typeof value.p.text === "string") text = value.p.text;
+    if ("c" in value && Array.isArray(value.c)) value.c.forEach(visit);
+  };
+  for (const frame of frames) for (const op of frame.ops) {
+    if (!Array.isArray(op)) continue;
+    if (op[0] === "add") visit(op[4]);
+    if (op[1] !== id) continue;
+    if (op[0] === "del") text = undefined;
+    if (op[0] === "text" && typeof op[3] === "string") {
+      text = op[2] === "append" ? (text ?? "") + op[3] : op[3];
+    }
+    if (op[0] === "set" && typeof op[2] === "object" && op[2] !== null &&
+        "text" in op[2] && typeof op[2].text === "string") text = op[2].text;
+  }
+  return text;
+}
+
 async function withNative(
   check: (ctx: {
     app: NativeChat;
@@ -172,8 +196,8 @@ describe("NativeChat on pinned Tern SDK with owned Unii wire", () => {
       send({ $: "delta", kind: "unii", text: "Stream" });
       send({ $: "delta", kind: "unii", text: "ed" });
       await until(() => app.view.live[0]?.text === "Streamed");
-      await tick();
-      expect(JSON.stringify(frames)).toContain("Streamed");
+      await until(() => renderedText(frames, "main.tail.0.body") === "Streamed");
+      expect(renderedText(frames, "main.tail.0.body")).toBe("Streamed");
 
       send({ $: "state", busy: true, wait: "", agents: [], pick: null,
         vendors: [], models: [], bills: false, credits: null, importing: null });
