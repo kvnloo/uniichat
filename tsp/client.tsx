@@ -264,7 +264,6 @@ export class NativeChat {
     // pair, not a different authoritative SendEvent.text from native/IME.
     // A newly typed identical draft is a distinct submission and is allowed.
     if (source === "semantic" && this.#lastRawSubmission === text && this.editor.text !== text) {
-      this.#lastRawSubmission = null;
       return;
     }
     if (MEMORY_COMMAND.test(text.trim())) {
