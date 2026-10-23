@@ -60,6 +60,8 @@ async function withNative(
     send(message: WireMessage): void;
     lose(code?: number): void;
     event(event: WireMessage): void;
+    keys(bytes: string | Uint8Array): void;
+    setJoinView(message: WireMessage): void;
   }) => Promise<void>,
   runtime: DeviceRuntime = { run: async () => ({ text: "owned", fail: false }), end: () => {} },
 ): Promise<void> {
@@ -73,6 +75,7 @@ async function withNative(
   const uploads: string[] = [];
   const queries: URLSearchParams[] = [];
   const authorization: string[] = [];
+  let joinView: WireMessage = { $: "view", parts: [], turn: 0 };
 
   const tern = new Session(input, {
     write(bytes) {
@@ -121,7 +124,7 @@ async function withNative(
     websocket: {
       open(ws) {
         sockets.add(ws);
-        ws.send(JSON.stringify({ $: "view", parts: [], turn: 0 }));
+        ws.send(JSON.stringify(joinView));
         ws.send(JSON.stringify({
           $: "state", busy: false, wait: "", agents: [], pick: null,
           vendors: [], models: [], bills: false, credits: null, importing: null,
@@ -155,6 +158,13 @@ async function withNative(
     },
     event(event: WireMessage) {
       input.emit("data", "\x1b_tsp;e;" + JSON.stringify(event) + "\x1b\\");
+    },
+    keys(bytes: string | Uint8Array) {
+      // Raw byte path through the pinned Session's InputParser/KeyDecoder.
+      input.emit("data", bytes);
+    },
+    setJoinView(message: WireMessage) {
+      joinView = message;
     },
   };
   try {
@@ -298,6 +308,96 @@ describe("NativeChat on pinned Tern SDK with owned Unii wire", () => {
     }, {
       run: async () => { calls++; return { text: "ok", fail: false }; },
       end: () => { cleanup++; },
+    });
+  });
+});
+
+describe("integrated native Memory on the real Tern session", () => {
+  test("composer Memory action owns a single modal; ordered context, levels, source navigation and focus restore", async () => {
+    await withNative(async ({ app, tern, frames, received, uploads, send, keys }) => {
+      const surface = tern.surfaces[0]!;
+      app.editor.set("unsent");
+      app.changed();
+      await tick();
+      dispatch(surface, { ev: "action", id: "dock.composer.bar.memory", act: "click" });
+      await until(() => received.some(m => m.$ === "root"));
+      expect(tern.surfaces).toHaveLength(1);
+      expect(app.editor.text).toBe("unsent");
+
+      send({ $: "know",
+        nodes: { "0+2": { text: "first compact", to: "2026-10-21" },
+          "2+2": { text: "second compact", to: "2026-10-22" },
+          "0+4": { text: "root compact", to: "2026-10-22" } },
+        whole: { "0": { kind: "user", text: "source zero" },
+          "1": { kind: "unii", text: "source one" } } });
+      send({ $: "view", parts: [[0, 4]], turn: 4,
+        context: { turn: 4, parts: [[0, 2], [2, 2]] } });
+      send({ $: "root", parts: [[0, 4]] });
+      await until(() => frames.some(f => JSON.stringify(f.ops).includes("2 exact memory blocks")));
+      // The modal catches raw keys before the editor. Tab switches to levels,
+      // whose lazy zoom goes over View.link_send and receives a real wire ACK.
+      keys("\t");
+      await until(() => received.some(m => m.$ === "zoom" &&
+        JSON.stringify(m.part) === "[0,4]"));
+      send({ $: "zoom", id: 0, n: 4, parts: [[0, 2], [2, 2]] });
+      keys("\x1b"); // The SDK flushes a lone Escape after its real 30ms timeout.
+      await Bun.sleep(60);
+      expect(app.editor.text).toBe("unsent");
+      keys("more");
+      await until(() => app.editor.text === "unsentmore");
+      expect(uploads).toEqual([]);
+      expect(tern.surfaces).toHaveLength(1);
+
+      // The slash command is local, consumes itself, and opens the same
+      // picker. No say upload or model-visible command is ever produced.
+      app.editor.set("/memory");
+      app.changed();
+      keys("\r");
+      await until(() => received.filter(m => m.$ === "root").length >= 2);
+      expect(uploads).toEqual([]);
+      expect(app.editor.text).toBe("");
+      keys("\x1b");
+      await Bun.sleep(60);
+      app.editor.set("still drafted");
+      app.changed();
+      await tick();
+      dispatch(surface, { ev: "action", id: "dock.composer.bar.memory", act: "click" });
+      expect(app.editor.text).toBe("still drafted");
+    });
+  });
+
+  test("new physical transport resets old tree before fresh authoritative join, not after", async () => {
+    await withNative(async ({ app, tern, frames, send, lose, setJoinView, queries }) => {
+      app.editor.set("kept across reconnect");
+      send({ $: "view", parts: [[0, 4]], turn: 4,
+        context: { turn: 4, parts: [[0, 4]] } });
+      dispatch(tern.surfaces[0]!, { ev: "action", id: "dock.composer.bar.memory", act: "click" });
+      await until(() => frames.some(f => JSON.stringify(f.ops).includes("1 exact memory blocks")));
+      // The live server is authoritative after rejoin, including its frozen
+      // context; this test fails if reconnect() runs after the join view.
+      setJoinView({ $: "view", parts: [[0, 8]], turn: 6,
+        context: { turn: 6, parts: [[0, 2], [2, 2]] } });
+      lose();
+      await until(() => queries.length >= 2 && app.view.up);
+      await until(() => frames.some(f => JSON.stringify(f.ops).includes("2 exact memory blocks")));
+      expect(app.editor.text).toBe("kept across reconnect");
+      send({ $: "view", parts: [[0, 8]], turn: 8, context: null });
+      await until(() => frames.some(f => JSON.stringify(f.ops).includes("historical context unknown")));
+    });
+  });
+
+  test("final disposal releases modal and ignores later raw input and wire actions", async () => {
+    await withNative(async ({ app, tern, frames, received, keys, send, uploads }) => {
+      dispatch(tern.surfaces[0]!, { ev: "action", id: "dock.composer.bar.memory", act: "click" });
+      await until(() => received.some(m => m.$ === "root"));
+      app.stop();
+      const count = received.length;
+      keys("disallowed\r");
+      send({ $: "know", nodes: { "0+2": { text: "late", to: "" } } });
+      await tick();
+      expect(received.length).toBe(count);
+      expect(uploads).toHaveLength(0);
+      expect(app.editor.text).toBe("");
     });
   });
 });
