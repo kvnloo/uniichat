@@ -69,8 +69,8 @@ export function registerMemoryTree(host: MemoryTreeHost): MemoryTreeRegistration
 
   const refresh = () => {
     if (disposed) return;
-    if (tab === "level") memory.ensureLevel(level, page);
     reconcile();
+    if (tab === "level") memory.ensureLevel(level, page);
     if (visible) host.changed();
   };
 
@@ -169,7 +169,7 @@ export function registerMemoryTree(host: MemoryTreeHost): MemoryTreeRegistration
             (p[1] === 1 ? "One-line summary" : "Compacted from " + p[1] + " messages") :
             "Waiting for " + (p[1] === 1 ? "source message" : "summary"),
         badges: [
-          { text: p[1] === 1 ? "recent / leaf" : "L" + partLevel(p) + " compact" },
+          { text: p[1] === 1 ? "source / leaf" : "L" + partLevel(p) + " compact" },
           ...(tab === "turn" ? [{ text: "turn context", tone: "accent" as const }] : []),
         ],
       };
