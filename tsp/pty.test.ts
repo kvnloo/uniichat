@@ -85,7 +85,7 @@ async function withPty(check: (ctx: {
     : ["script", "-qfec", command, "/dev/null"];
   const env: Record<string, string | undefined> = {
     ...process.env, HOME: home, UNII_HOME: home, UNII_DIR: home,
-    UNII_WORK: join(home, "work"), UNII_NO_TELEMETRY: "1",
+    UNII_WORK: join(home, "work"), UNII_COMPUTER: "0", UNII_NO_TELEMETRY: "1",
     UNII_PTY_URL: "http://127.0.0.1:" + server.port,
     TERN_TSP_RECORD: "",
   };
@@ -161,8 +161,12 @@ async function withPty(check: (ctx: {
       await Promise.race([proc.exited, Bun.sleep(1500)]);
       if (proc.exitCode === null) proc.kill("SIGTERM");
       await Promise.race([proc.exited, Bun.sleep(1500)]);
+      if (proc.exitCode === null) proc.kill("SIGKILL");
+      await Promise.race([proc.exited, Bun.sleep(1500)]);
     }
-    await pump?.catch(() => {});
+    // A broken script utility must not keep the entire test runner blocked
+    // on its stdout stream after process termination.
+    await Promise.race([pump?.catch(() => {}), Bun.sleep(1500)]);
     server.stop(true);
     rmSync(home, { recursive: true, force: true });
   }
