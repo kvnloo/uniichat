@@ -32,8 +32,8 @@ How it works
   and can drive a Mac's screen, on any computer where `unii` is open
   (each is a device it can name). It can spawn subagents, which work in
   the background and report back as messages.
-- **Import.** Bring your past Claude and ChatGPT chats (Claude Code and
-  Codex folders, or the websites' exports); they join the tree.
+- **Import.** Bring your past Claude, ChatGPT and OMP chats (Claude Code,
+  Codex and OMP folders, or the websites' exports); they join the tree.
 
 The design is in the header comment of each file. Start with Memory.ts
 (the tree and the view), Server.ts (the chat, turns, workers) and

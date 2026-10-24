@@ -128,19 +128,20 @@ const FRAME = 16;
 // would print the whole page again (ms)
 const SETTLE = 100;
 
-// where Claude Code and Codex keep their sessions
+// where Claude Code, Codex and OMP keep their sessions
 const CODEX   = process.env.CODEX_HOME ?? os.homedir() + "/.codex";
 const IMPORTS = [
   (process.env.CLAUDE_CONFIG_DIR ?? os.homedir() + "/.claude") + "/projects",
   CODEX + "/sessions",
   CODEX + "/archived_sessions",
+  (process.env.OMP_AGENT_DIR ?? os.homedir() + "/.omp/agent") + "/sessions",
 ];
 
 // what /import takes: its day; a site's export (its zip, or its
 // conversations.json)
 const SINCE  = /\bsince +(\d{4}-\d\d-\d\d)\b/;
 const EXPORT = /\.(zip|json)$/i;
-const HOW = "Pick with /import [claude] [chatgpt] [since 2026-06-01] [tools] [sessions] [-#n] [<export>.zip] [go] (-#n: not session n; go: import); /import pause or resume: the import running. Exports, on each website: " + Object.entries(Import.EXPORTS).map(([app, how]) => app + ": " + how).join("; ") + "; it emails you a zip.";
+const HOW = "Pick with /import [claude] [chatgpt] [omp] [since 2026-06-01] [tools] [sessions] [-#n] [<export>.zip] [go] (-#n: not session n; go: import); /import pause or resume: the import running. Exports, on each website: " + Object.entries(Import.EXPORTS).map(([app, how]) => app + ": " + how).join("; ") + "; it emails you a zip.";
 
 // how a terminal adds credit, said when a request is refused for want
 // of it
@@ -167,7 +168,7 @@ function term_groups(v: View.View): [group: string, cmds: Cmd[]][] {
       ["/open #id",         "",                        "open block #id, as it shows, and keep it open",  (t, a) => term_block(t, a, true)],
       ["/close #id",        "",                        "close block #id and keep it closed",             (t, a) => term_block(t, a, false)],
       ["/fold",             "Ctrl+F",                  "the chat in the fewest blocks; again: unfold (Ctrl+F eaten? type /fold)", term_fold],
-      ["/import [...]",     "",                        "import your Claude and ChatGPT chats (alone: options, costs)", term_import],
+      ["/import [...]",     "",                        "import your Claude, ChatGPT and OMP chats (alone: options, costs)", term_import],
       ["/export",           "",                        "save memory and account as ./unii-memory.json",  term_export],
       ["/tree",             "",                        "the whole memory, in the browser (its link prints too)", (t) => term_browse(t, "The memory tree", t.url + "/tree")],
       ["",                  "Ctrl+Z",                  "suspend; fg brings it back",                     (t) => Screen.screen_suspend(t.scr)],
@@ -547,7 +548,7 @@ async function term_export(t: Term): Promise<void> {
   }
 }
 
-// this computer's Claude and ChatGPT chats, and the websites' exports
+// this computer's Claude, ChatGPT and OMP chats, and the websites' exports
 // given (EXPORT), not imported yet, as the words want (claude, chatgpt;
 // Import.Want: since a day; tools; -#n: not session n): without go,
 // what it finds and costs (sessions: and the list); with go, sent;
@@ -565,7 +566,7 @@ async function term_import(t: Term, arg: string): Promise<void> {
     term_note(t, "Not understood. " + HOW);
     return;
   }
-  term_note(t, "Looking for Claude and ChatGPT chats on this computer…");
+  term_note(t, "Looking for Claude, ChatGPT and OMP chats on this computer…");
   const read = await Promise.all([...IMPORTS.map(term_sessions), ...files.map(export_sessions)]).catch((e) => String(e.message ?? e));
   if (typeof read === "string") {
     term_note(t, "Not imported: " + read);

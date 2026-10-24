@@ -66,3 +66,30 @@ test("an import's AI is not Unii", () => {
   const show = (kind: any, imported?: boolean) => Memory.show(Memory.root(0, { kind, text: "", imported }));
   expect([show("unii", true), show("tool", true), show("user", true), show("unii")]).toEqual(["ai: ", "ai: ", "user: ", "unii: "]);
 });
+
+// an OMP log: a person's say (not what a harness injected), OMP's say
+// and its tool calls, the tools' results; never thinking, a developer's
+// reminder, nor a subagent's log (its session line names a parent)
+test("an OMP session imports its chat, not its thinking or subagents", async () => {
+  const at   = "2026-10-24T18:59:09.096Z";
+  const line = (j: object) => JSON.stringify({ timestamp: at, ...j });
+  const msg  = (role: string, content: unknown) => line({ type: "message", message: { role, content } });
+  const head = [JSON.stringify({ type: "title", v: 1, title: "t" }), line({ type: "session", version: 3, id: "a", cwd: "/home/k/code" })];
+  const body = [
+    msg("user", [{ type: "text", text: "<attachment>\ninjected" }, { type: "text", text: "fix the bug" }]),
+    msg("assistant", [{ type: "thinking", thinking: "secret" }, { type: "text", text: "on it" }, { type: "toolCall", id: "c", name: "bash", arguments: { command: "ls" } }]),
+    msg("toolResult", [{ type: "text", text: "a.ts" }]),
+    msg("developer", [{ type: "text", text: "<system-reminder>rule</system-reminder>" }]),
+    line({ type: "model_usage", usage: {} }),
+  ];
+  const s = await Import.import_session(new Blob([[...head, ...body].join("\n") + "\n"]), "log");
+  expect(s?.app).toBe("OMP");
+  expect(s?.where).toBe("session in /home/k/code");
+  const msgs: Import.Msg[] = [];
+  for await (const m of Import.import_read(s!)) {
+    msgs.push(m);
+  }
+  expect(msgs.map((m) => [m.kind, m.text])).toEqual([["user", "fix the bug"], ["unii", "on it"], ["tool", 'bash {"command":"ls"}'], ["echo", "a.ts"]]);
+  const sub = [head[0], line({ type: "session", version: 3, id: "b", cwd: "/home/k/code", parentSession: "/x.jsonl" }), ...body];
+  expect(await Import.import_session(new Blob([sub.join("\n") + "\n"]), "log")).toBeNull();
+});
