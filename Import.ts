@@ -1,7 +1,8 @@
 // Import
 // ======
-// A person's past Claude, ChatGPT and OMP chats (APPS), read into their
-// chat: those on their computer (Claude Code's, Codex's and OMP's logs), by the
+// A person's past Claude, ChatGPT, OMP and Hermes chats (APPS), read into
+// their chat: those on their computer (Claude Code's, Codex's and OMP's
+// logs, Hermes's state.db: ImportHermes.ts), by the
 // terminal (Term.ts `/import`) or a folder picked on the site (main.ts),
 // and those on the websites, from the zip each mails on request
 // (import_export). A session (a log; a site's chat) is streamed twice:
@@ -76,8 +77,8 @@ const PRICE = { base: 187, byte: 735, depth: 628 };
 const PART = 2 ** 20;
 
 // the apps a session is of: Claude and ChatGPT, each its program on the
-// computer and its website; OMP (oh-my-pi), its program only
-export const APPS = ["Claude", "ChatGPT", "OMP"];
+// computer and its website; OMP (oh-my-pi) and Hermes, their programs only
+export const APPS = ["Claude", "ChatGPT", "OMP", "Hermes"];
 
 // sessions all imported before
 export const OLD = "Nothing new: these chats are in Unii's memory already.";
@@ -535,8 +536,8 @@ function import_date(at: unknown, last: string): string {
   return Number.isNaN(ms) ? last : new Date(ms).toISOString();
 }
 
-// a message in its pages
-function msgs_of(kind: Kind, text: string, date: string): Msg[] {
+// a message in its pages (ImportHermes.ts too)
+export function msgs_of(kind: Kind, text: string, date: string): Msg[] {
   const pages = text.trim() === "" ? [] : clip_pages(text);
   return pages.map((page, k) => ({ kind, text: page, date, more: k < pages.length - 1 }));
 }
