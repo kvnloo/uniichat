@@ -11,6 +11,7 @@
 import type { Ask, Img } from "./AskAI.ts";
 import { Agent, type Emit, type Entry, type Item, type Step, type Tool, type Use, type Wire } from "./Agent.ts";
 import { Price, type Usage } from "./Price.ts";
+import { UsageLedger } from "./UsageLedger.ts";
 import * as config from "./Config.ts";
 
 // Types
@@ -139,6 +140,7 @@ export namespace OpenAI {
     use.output   = u.output_tokens ?? 0;
     use.searches = (res.output ?? []).filter((o: any) => o.type === "web_search_call").length;
     use.speed    = OpenAI.tier(res);
+    if (res.usage) UsageLedger.measured(use);
   }
 
   // the speed a response ran at

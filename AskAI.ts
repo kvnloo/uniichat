@@ -92,6 +92,8 @@ export type Ask = Pick & {
   bill?     : Bill;
   patient?  : boolean;
   yields?   : string;
+  role?     : Served;
+  target?   : string;
 };
 
 // a prefix cached: until when; while its leader's response has not
