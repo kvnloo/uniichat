@@ -76,8 +76,9 @@ const HELP   = ARGS.some((a) => ["help", "--help", "-h"].includes(a));
 const ASKVER = ARGS.includes("version");
 const UPDATE = ARGS.includes("update");
 const SERVE  = ARGS.includes("serve");
+const ACP    = ARGS.includes("acp");
 const PORT   = SERVE ? ARGS.find((a) => /^\d+$/.test(a)) : undefined;
-const WORDS  = ["login", "help", "--help", "-h", "version", "update", "serve"];
+const WORDS  = ["login", "help", "--help", "-h", "version", "update", "serve", "acp"];
 const WEB    = /^https?:\/\//;
 const ODD    = ARGS.find((a) => !WORDS.includes(a) && !WEB.test(a) && a !== PORT);
 const HOME   = process.env.UNII_HOME || os.homedir() + "/.unii";
@@ -89,6 +90,8 @@ const USAGE = `Usage: unii [url]           the chat (url: $UNII_URL, else https:
        unii login [url]     sign in
        unii update [url]    install the latest unii (curl | sh, shown first)
        unii version         this unii's version
+       unii acp [url]       the chat as an ACP agent on stdio (T3 Code, Zed,
+                            JetBrains): each session works in its cwd
        unii serve [port]    your own UniiChat server, at http://127.0.0.1:8788
                             (another port: set UNII_SITE to its address too),
                             on your ANTHROPIC_API_KEY and OPENAI_API_KEY;
@@ -1188,6 +1191,11 @@ if (HELP || ODD !== undefined) {
   await (await import("./Server.ts")).serve(Number(PORT ?? 8788), null);
 } else if (LOGIN) {
   await login_run(SERVER);
+} else if (ACP) {
+  if (SERVER !== OURS) {
+    self_mark();
+  }
+  await (await import("./Acp.ts")).acp({ url: SERVER, auth: term_auth, device: DEVICE, home: HOME, version: VERSION });
 } else {
   if (!await term_signed(SERVER)) {
     await login_run(SERVER);
