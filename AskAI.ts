@@ -38,7 +38,7 @@ import type { Usage } from "./Price.ts";
 // result, a note from before the chat (imported)
 export type Kind = "user" | "work" | "mind" | "unii" | "tool" | "echo" | "note";
 
-export type Vendor = "claude-api" | "openai-api";
+export type Vendor = "claude-api" | "openai-api" | "openai-sub" | "anthropic-sub";
 
 // an image: its mime type, its bytes in base64
 export type Img = { type: string; data: string };
@@ -92,6 +92,8 @@ export type Ask = Pick & {
   bill?     : Bill;
   patient?  : boolean;
   yields?   : string;
+  role?     : Served;
+  target?   : string;
 };
 
 // a prefix cached: until when; while its leader's response has not
@@ -143,6 +145,8 @@ const AGAIN = 60e3;
 export const TTL: Record<Vendor, number> = {
   "claude-api" : 300e3,
   "openai-api" : 1800e3,
+  "openai-sub" : 1800e3,
+  "anthropic-sub" : 300e3,
 };
 
 // the prefixes cached, by key (AskAI.keys)
