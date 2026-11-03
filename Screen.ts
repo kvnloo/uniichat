@@ -48,6 +48,7 @@ export type Screen = {
   up     : number;
   rows   : number;
   on     : (key: string) => void;
+  intercept? : (key: string) => boolean;
 };
 
 // Constants
@@ -216,6 +217,10 @@ function screen_key(scr: Screen, data: string): number {
 
 // a key: an editing key edits the input; any other goes to Term.ts
 function screen_press(scr: Screen, key: string): void {
+  if (scr.intercept?.(key)) {
+    scr.on("");
+    return;
+  }
   if (!ed_key(scr.ed, key)) {
     scr.on(key);
   }

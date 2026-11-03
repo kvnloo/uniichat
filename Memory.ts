@@ -786,7 +786,7 @@ export namespace Memory {
   // a call of node (l,i)'s summary, on the compactor
   export function ask(mem: Memory, l: number, i: number, text: string, blocks: Block[]): Call {
     const bill = Memory.bill(mem, l, i, text);
-    return AskAI.ask({ ...mem.share(), ...Pick.ask(config.COMPACTOR), blocks, bill, patient: true, yields: Memory.served(mem, l, i) === "import" ? mem.dir : undefined }, () => {});
+    return AskAI.ask({ ...mem.share(), ...Pick.ask(config.COMPACTOR), role: Memory.served(mem, l, i), target: Memory.ref({ l, i }), blocks, bill, patient: true, yields: Memory.served(mem, l, i) === "import" ? mem.dir : undefined }, () => {});
   }
 
   // a summary's try: its call's end, the call held in `calls` till then

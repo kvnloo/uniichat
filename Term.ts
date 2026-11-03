@@ -22,11 +22,13 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import type { Kind } from "./AskAI.ts";
 import * as Import from "./Import.ts";
+import * as ImportHermes from "./ImportHermes.ts";
 import { Machine, type Job } from "./Machine.ts";
 import * as Paint from "./Paint.ts";
 import { type Move, Pick } from "./Pick.ts";
 import * as Screen from "./Screen.ts";
 import * as View from "./View.ts";
+import * as Complete from "./Complete.ts";
 
 // Types
 // =====
@@ -53,6 +55,8 @@ type Term = {
   imgs    : Blob[];
   flow    : Map<View.Live, number>;
   logs    : Map<string, number>;
+  importSessions : number;
+  completion : { text: string; at: number; hidden: boolean };
 };
 
 // a line of /help: how it is typed ("": keys only), its keys, what it
@@ -72,8 +76,9 @@ const HELP   = ARGS.some((a) => ["help", "--help", "-h"].includes(a));
 const ASKVER = ARGS.includes("version");
 const UPDATE = ARGS.includes("update");
 const SERVE  = ARGS.includes("serve");
+const ACP    = ARGS.includes("acp");
 const PORT   = SERVE ? ARGS.find((a) => /^\d+$/.test(a)) : undefined;
-const WORDS  = ["login", "help", "--help", "-h", "version", "update", "serve"];
+const WORDS  = ["login", "help", "--help", "-h", "version", "update", "serve", "acp"];
 const WEB    = /^https?:\/\//;
 const ODD    = ARGS.find((a) => !WORDS.includes(a) && !WEB.test(a) && a !== PORT);
 const HOME   = process.env.UNII_HOME || os.homedir() + "/.unii";
@@ -85,6 +90,8 @@ const USAGE = `Usage: unii [url]           the chat (url: $UNII_URL, else https:
        unii login [url]     sign in
        unii update [url]    install the latest unii (curl | sh, shown first)
        unii version         this unii's version
+       unii acp [url]       the chat as an ACP agent on stdio (T3 Code, Zed,
+                            JetBrains): each session works in its cwd
        unii serve [port]    your own UniiChat server, at http://127.0.0.1:8788
                             (another port: set UNII_SITE to its address too),
                             on your ANTHROPIC_API_KEY and OPENAI_API_KEY;
@@ -128,19 +135,23 @@ const FRAME = 16;
 // would print the whole page again (ms)
 const SETTLE = 100;
 
-// where Claude Code and Codex keep their sessions
+// where Claude Code, Codex and OMP keep their sessions
 const CODEX   = process.env.CODEX_HOME ?? os.homedir() + "/.codex";
 const IMPORTS = [
   (process.env.CLAUDE_CONFIG_DIR ?? os.homedir() + "/.claude") + "/projects",
   CODEX + "/sessions",
   CODEX + "/archived_sessions",
+  (process.env.OMP_AGENT_DIR ?? os.homedir() + "/.omp/agent") + "/sessions",
 ];
+
+// where Hermes keeps its state.db files (ImportHermes.ts)
+const HERMES = process.env.HERMES_HOME ?? os.homedir() + "/.hermes";
 
 // what /import takes: its day; a site's export (its zip, or its
 // conversations.json)
 const SINCE  = /\bsince +(\d{4}-\d\d-\d\d)\b/;
 const EXPORT = /\.(zip|json)$/i;
-const HOW = "Pick with /import [claude] [chatgpt] [since 2026-06-01] [tools] [sessions] [-#n] [<export>.zip] [go] (-#n: not session n; go: import); /import pause or resume: the import running. Exports, on each website: " + Object.entries(Import.EXPORTS).map(([app, how]) => app + ": " + how).join("; ") + "; it emails you a zip.";
+const HOW = "Pick with /import [claude] [chatgpt] [omp] [hermes] [since 2026-06-01] [tools] [sessions] [-#n] [<export>.zip] [go] (-#n: not session n; go: import); /import pause or resume: the import running. Exports, on each website: " + Object.entries(Import.EXPORTS).map(([app, how]) => app + ": " + how).join("; ") + "; it emails you a zip.";
 
 // how a terminal adds credit, said when a request is refused for want
 // of it
@@ -167,7 +178,7 @@ function term_groups(v: View.View): [group: string, cmds: Cmd[]][] {
       ["/open #id",         "",                        "open block #id, as it shows, and keep it open",  (t, a) => term_block(t, a, true)],
       ["/close #id",        "",                        "close block #id and keep it closed",             (t, a) => term_block(t, a, false)],
       ["/fold",             "Ctrl+F",                  "the chat in the fewest blocks; again: unfold (Ctrl+F eaten? type /fold)", term_fold],
-      ["/import [...]",     "",                        "import your Claude and ChatGPT chats (alone: options, costs)", term_import],
+      ["/import [...]",     "",                        "import your Claude, ChatGPT, OMP and Hermes chats (alone: options, costs)", term_import],
       ["/export",           "",                        "save memory and account as ./unii-memory.json",  term_export],
       ["/tree",             "",                        "the whole memory, in the browser (its link prints too)", (t) => term_browse(t, "The memory tree", t.url + "/tree")],
       ["",                  "Ctrl+Z",                  "suspend; fg brings it back",                     (t) => Screen.screen_suspend(t.scr)],
@@ -220,7 +231,10 @@ function term_new(url: string): Term {
     imgs    : [],
     flow    : new Map(),
     logs    : new Map(),
+    completion : { text: "", at: 0, hidden: false },
+    importSessions : 0,
   };
+  t.scr.intercept = (key) => term_complete(t, key);
   process.stdin.on("end", () => {
     if (t.scr.ed.text.trim() !== "") {
       term_enter(t);
@@ -356,6 +370,58 @@ function term_press(t: Term, key: string): void {
     cmd[3](t, cmd[0] === "" ? key : "");
   }
   term_draw(t);
+}
+
+// Complete local command names and their live argument values.
+function term_matches(t: Term): Complete.Choice[] {
+  const ed = t.scr.ed;
+  const state = t.completion;
+  if (state.text !== ed.text) {
+    Object.assign(state, { text: ed.text, at: 0, hidden: false });
+  }
+  if (!t.scr.tty || state.hidden) {
+    return [];
+  }
+  const matches = Complete.choices(ed.text, ed.pos, term_commands(t.v).map(([use, , description]) => ({ use, description })), t.v, t.importSessions);
+  state.at = Math.min(state.at, Math.max(0, matches.length - 1));
+  return matches;
+}
+
+function term_complete(t: Term, key: string): boolean {
+  const matches = term_matches(t);
+  if (matches.length === 0) {
+    return false;
+  }
+  const state = t.completion;
+  if (key === "Esc") {
+    state.hidden = true;
+  } else if (key === "Up" || key === "Down") {
+    state.at = (state.at + (key === "Up" ? -1 : 1) + matches.length) % matches.length;
+  } else if (key === "Tab" || (key === "Enter" && matches[state.at].text.trimEnd() !== t.scr.ed.text.trimEnd())) {
+    const choice = matches[state.at];
+    Object.assign(t.scr.ed, { text: choice.text, pos: choice.pos, moved: false });
+    Object.assign(state, { text: choice.text, at: 0, hidden: !choice.more });
+  } else {
+    return false;
+  }
+  return true;
+}
+
+function term_suggestions(t: Term, max: number): Paint.Line[] {
+  const matches = term_matches(t);
+  if (matches.length === 0 || max < 2) {
+    return [];
+  }
+  const count = Math.min(6, max - 1);
+  const at = t.completion.at;
+  const start = Math.max(0, Math.min(at - count + 1, matches.length - count));
+  const lines = matches.slice(start, start + count).map((choice, i) => [
+    Paint.Run(start + i === at ? "> " : "  ", Paint.DIM),
+    Paint.Run(choice.label, { ...Paint.INK, b: start + i === at }),
+    Paint.Run("  " + choice.description, Paint.DIM),
+  ]);
+  lines.push([Paint.Run("  ↑↓ select · Tab complete · Esc dismiss", Paint.DIM)]);
+  return lines;
 }
 
 // Enter: runs a command, or sends the input; text not sent stays (it
@@ -547,7 +613,7 @@ async function term_export(t: Term): Promise<void> {
   }
 }
 
-// this computer's Claude and ChatGPT chats, and the websites' exports
+// this computer's Claude, ChatGPT, OMP and Hermes chats, and the websites' exports
 // given (EXPORT), not imported yet, as the words want (claude, chatgpt;
 // Import.Want: since a day; tools; -#n: not session n): without go,
 // what it finds and costs (sessions: and the list); with go, sent;
@@ -565,8 +631,9 @@ async function term_import(t: Term, arg: string): Promise<void> {
     term_note(t, "Not understood. " + HOW);
     return;
   }
-  term_note(t, "Looking for Claude and ChatGPT chats on this computer…");
-  const read = await Promise.all([...IMPORTS.map(term_sessions), ...files.map(export_sessions)]).catch((e) => String(e.message ?? e));
+  term_note(t, "Looking for Claude, ChatGPT, OMP and Hermes chats on this computer…");
+  const hermes = apps.length === 0 || apps.includes("Hermes") ? [ImportHermes.hermes_sessions(HERMES)] : [];
+  const read = await Promise.all([...IMPORTS.map(term_sessions), ...hermes, ...files.map(export_sessions)]).catch((e) => String(e.message ?? e));
   if (typeof read === "string") {
     term_note(t, "Not imported: " + read);
     return;
@@ -578,6 +645,7 @@ async function term_import(t: Term, arg: string): Promise<void> {
   }
   const old   = await done.json();
   const shown = Import.import_plan(sessions, want, old, View.view_count(t.v)).sessions;
+  t.importSessions = shown.length;
   want.off    = shown.filter((s, k) => words.includes("-#" + (k + 1))).map(Import.import_id);
   const plan  = Import.import_plan(sessions, want, old, View.view_count(t.v));
   const found = "Found " + Import.import_count(plan.msgs, "new ") + ". ";
@@ -907,9 +975,10 @@ function term_paint(t: Term): void {
   const iw    = term_inner();
   const room  = (process.stdout.rows || 24) - 1;
   const off   = !View.view_typing(t.v);
-  const input = Screen.screen_input(t.scr, iw, room - 3, off ? OFF : View.HINT + " · /help", off);
+  const suggestions = term_suggestions(t, Math.max(0, room - 4));
+  const input = Screen.screen_input(t.scr, iw, room - 3 - suggestions.length, off ? OFF : View.HINT + " · /help", off);
   const under = Paint.rule_text(t.v.up ? "" : "offline", iw);
-  const own   = term_inset([Paint.rule_line(t.v, iw), ...input.lines, under, Paint.tabs_line(t.v, iw)]);
+  const own   = term_inset([Paint.rule_line(t.v, iw), ...input.lines, ...suggestions, under, Paint.tabs_line(t.v, iw)]);
   const rest  = View.view_stream(t.v).map((l) => ({ kind: l.kind, text: l.text.slice(t.flow.get(l) ?? 0) }));
   const held  = t.v.page === null ? View.view_rows(t.v, t.wait).flat() : [];
   const tail  = term_lines([...held, ...View.view_tail(t.v, rest)]).flatMap((l) => Paint.runs_wrap(l, w, true));
@@ -1122,6 +1191,11 @@ if (HELP || ODD !== undefined) {
   await (await import("./Server.ts")).serve(Number(PORT ?? 8788), null);
 } else if (LOGIN) {
   await login_run(SERVER);
+} else if (ACP) {
+  if (SERVER !== OURS) {
+    self_mark();
+  }
+  await (await import("./Acp.ts")).acp({ url: SERVER, auth: term_auth, device: DEVICE, home: HOME, version: VERSION });
 } else {
   if (!await term_signed(SERVER)) {
     await login_run(SERVER);

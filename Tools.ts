@@ -589,11 +589,11 @@ export namespace Tools {
         const system = Tools.system(SUB);
         const blocks = [...agent.view, Tools.devices(tools), log];
         const effort = role.effort ?? run.effort;
-        return { ...run, effort, system, blocks, searches: SEARCHES, server, bill };
+        return { ...run, role: "agent", target: agent.name, effort, system, blocks, searches: SEARCHES, server, bill };
       }
       case "hands": {
         const system = Tools.system(HANDS.replace("{device}", role.device));
-        return { ...run, system, blocks: [...agent.view, log], searches: 0, server, bill };
+        return { ...run, role: "computer", target: agent.name, system, blocks: [...agent.view, log], searches: 0, server, bill };
       }
     }
   }
