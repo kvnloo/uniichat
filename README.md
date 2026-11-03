@@ -65,6 +65,25 @@ Other commands:
                                      # one `unii` executable; `unii serve`
                                      # runs the server it carries
 
+As an ACP agent
+---------------
+
+`unii acp [url]` (or `bun Term.ts acp [url]`) speaks the Agent Client
+Protocol on stdio, so ACP hosts (T3 Code, Zed, JetBrains) can drive the
+chat. Sign in first with `unii login [url]`. Every ACP session is a view
+of the same one chat and a device of its own, named `<computer>-<folder>`:
+the agent's tools run in the session's cwd (its work dir, under
+`~/.unii/acp`, links each agent's dir to that cwd). A prompt streams the
+reply, thoughts and tool calls until no work runs; cancel stops all
+work. Example T3 Code provider instance (`settings.json`):
+
+    "uniichat": {
+      "driver": "acpRegistry",
+      "displayName": "UniiChat",
+      "enabled": true,
+      "config": { "source": "local", "commandPath": "unii", "commandArgs": ["acp"] }
+    }
+
 Your chats live in ~/.unii/users/<id>, one JSON line per message
 (main/) and per summary (tree/). They are the memory: back them up.
 
