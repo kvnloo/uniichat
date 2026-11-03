@@ -45,7 +45,7 @@ import { OpenAI, TRANSCRIBER } from "./OpenAI.ts";
 import { Pick } from "./Pick.ts";
 import { Price } from "./Price.ts";
 import { MASTER, SEARCHES, Tools, type Agent, type Live, type Moved as Kit } from "./Tools.ts";
-import { email_ask, FRAME, IMAGES, live_push, MOVE, PING, QUIT, SUMMARIES, TICK, TURN, WIRE, type Answer, type Part, type Server as Out, type Wait } from "./View.ts";
+import { email_ask, FRAME, IMAGES, live_push, MOVE, PING, QUIT, SUMMARIES, TICK, TURN, WIRE, type Answer, type ModelContext, type Part, type Server as Out, type Wait } from "./View.ts";
 import * as config from "./Config.ts";
 import hello_md from "./hello.md" with { type: "text" };
 import app_js from "./web/app.js" with { type: "file" };
@@ -113,6 +113,7 @@ type Chat = {
   live  : Live[];
   calls : Record<string, string>; // its tool calls awaiting their results, by id (Chat.on)
   eye   : Eye;
+  context: ModelContext | null; // frozen actual call-time blocks in this active turn
   after : Promise<void>;
   batch : Batch | null;
   ending: { all: boolean; then: () => void } | null;
@@ -127,7 +128,7 @@ type Chat = {
 // its turn (its call and goal check's by their refs, Main.away), the
 // tools' part, its summaries running
 type Moved = { user: string; credit: number | undefined; turn: Turn; tools: Kit; sums: Given[] };
-type Turn = { busy: boolean; call: string | null; model: string; check: Check<string> | null; sent: Msg[]; wait: Msg[]; asked: boolean; open: number; live: Live[]; calls: Record<string, string>; eye: Eye };
+type Turn = { busy: boolean; call: string | null; model: string; check: Check<string> | null; sent: Msg[]; wait: Msg[]; asked: boolean; open: number; live: Live[]; calls: Record<string, string>; eye: Eye; context: ModelContext | null };
 
 // another process (the one this gives its chats to or takes them from,
 // or one a call is fed from or to), by a line of JSON a message
@@ -296,7 +297,7 @@ export namespace Chat {
     const pick = Pick.load(mem.pick, config.OFFER, config.PICK);
     const chat: Chat = {
       acct, mem, tools, pick, socks: new Set(), acts: new Map(), busy: false, posts: 1, call: null, model: "", check: null, asked: false, open: 0, sent: [], wait: [],
-      halt: new AbortController(), live: [], calls: {}, eye: { parts: [], from: 0 }, after: Promise.resolve(), batch: null, ending: null,
+      halt: new AbortController(), live: [], calls: {}, eye: { parts: [], from: 0 }, context: null, after: Promise.resolve(), batch: null, ending: null,
       writes: Promise.resolve(), held: null, wallet,
     };
     // a saved pick not offered gave way: told once
@@ -513,6 +514,9 @@ export namespace Chat {
       chat.sent = [];
       chat.wait = [];
       chat.busy = false;
+      chat.context = null;
+      // An ended turn must not leave historical call context on the wire.
+      chat.socks.forEach((sock) => Chat.show(chat, sock));
       Chat.live(chat, null, []);
       Chat.phone(chat);
       Chat.after(chat);
@@ -548,7 +552,13 @@ export namespace Chat {
     const imgs = says.flatMap((say) => say.imgs);
     const server = Tools.at(chat.tools, "main");
     chat.eye = Chat.eye(mem, from);
-    chat.socks.forEach((sock) => Chat.show(chat, sock));
+    // Freeze the exact built parts passed by Memory.view, before any call
+    // callback can advance the display eye (e.g. import completion).
+    const context: ModelContext = {
+      turn: from,
+      parts: chat.eye.parts.filter(([id, n]) => Memory.built(mem, Math.log2(n), id / n))
+        .map(([id, n]): Part => [id, n]),
+    };
     const bill = mem.pay?.("chat", String(msgs[0].id));
     const blocks = [...view, Tools.devices(chat.tools), Tools.at_work(chat.tools), { text: HEAD + text, mark: true }];
     const ask = { ...Chat.share(chat), searches: SEARCHES, server, blocks, imgs, bill };
@@ -556,6 +566,9 @@ export namespace Chat {
     chat.asked = true;
     chat.open = 0;
     const call = (chat.call = AskAI.ask(ask, (ev) => Chat.on(chat, null, ev)));
+    // Publish only for a real model call; never infer from a later display.
+    chat.context = context;
+    chat.socks.forEach((sock) => Chat.show(chat, sock));
     Chat.change(chat);
     return Chat.ended(chat, call, halt);
   }
@@ -993,9 +1006,9 @@ export namespace Chat {
   export function move(chat: Chat, peer: Peer, url: string): void {
     const user = chat.acct.user;
     const far = (call: Call) => Main.away(peer, call);
-    const { busy, model, sent, wait, asked, open, live, calls, eye } = chat;
+    const { busy, model, sent, wait, asked, open, live, calls, eye, context } = chat;
     const check = chat.check && { call: far(chat.check.call), goal: chat.check.goal };
-    const turn = { busy, call: chat.call && far(chat.call), model, check, sent, wait, asked, open, live, calls, eye };
+    const turn = { busy, call: chat.call && far(chat.call), model, check, sent, wait, asked, open, live, calls, eye, context };
     const tools = Tools.give(chat.tools, url, far);
     if (chat.batch !== null) {
       Chat.keep(chat.batch, chat);
@@ -1340,8 +1353,11 @@ export namespace Chat {
     const ids = (a: number, b: number) => Array.from({ length: Math.max(0, b - a) }, (_, k): Part => [a + k, 1]);
     const raw = [...ids(from, cover[0]), ...ids(Math.max(from, cover[1]), count)];
     const parts = [...eye, ...tree, ...raw].sort((x, y) => x[0] - y[0]);
+    // Imports can hide call-time summaries from the display projection.
+    // Teach the snapshot separately so its real source nodes are available.
     Chat.teach(chat, sock, parts);
-    Chat.send(sock, { $: "view", parts, turn: from });
+    if (chat.context !== null) Chat.teach(chat, sock, chat.context.parts);
+    Chat.send(sock, { $: "view", parts, turn: from, context: chat.busy ? chat.context : null });
   }
 
   // the fewest blocks under a tree part that tile messages [a, b)

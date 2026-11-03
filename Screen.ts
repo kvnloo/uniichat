@@ -106,9 +106,6 @@ const KEYS: Record<string, string> = {
 // a word's character
 const WORD = /[\p{L}\p{N}_]/u;
 
-// Cursor-only keys and footer repaints share the expensive grapheme layout.
-const LAYOUTS = new WeakMap<Ed, { text: string; w: number; rows: string[]; places: Place[] }>();
-
 // modifiers, as bits of (mods - 1)
 const MODS: [number, string][] = [[4, "Ctrl+"], [2, "Alt+"], [1, "Shift+"]];
 
@@ -297,39 +294,53 @@ export function screen_input(scr: Screen, w: number, max: number, hint: string, 
 // Ed
 // ==
 
-// the rows' texts, wrapped at ed.w columns (a character at a time); each
-// place of the cursor (before each character, and the end); the cursor's
+// the rows' texts and grapheme boundaries, wrapped at ed.w columns;
+// a cursor move changes only the selected place
+// The grapheme layout depends on text and width, not cursor position.
+// History restores can also change text directly, so compare both inputs.
+const LAYOUTS = new WeakMap<Ed, { text: string; w: number; rows: string[]; places: Place[] }>();
+
 function ed_layout(ed: Ed): { rows: string[]; places: Place[]; at: number } {
-  const cached = LAYOUTS.get(ed);
-  if (cached?.text === ed.text && cached.w === ed.w) {
-    return { rows: cached.rows, places: cached.places, at: cached.places.findIndex((p) => p.pos >= ed.pos) };
-  }
-  const rows = [""];
-  const places: Place[] = [];
-  let col = 0;
-  let pos = 0;
-  for (const g of Paint.text_graphemes(ed.text)) {
-    const x = g === "\n" ? "" : Paint.text_clean(g);
-    if (g !== "\n" && col + Paint.text_width(x) > ed.w) {
+  let layout = LAYOUTS.get(ed);
+  if (layout === undefined || layout.text !== ed.text || layout.w !== ed.w) {
+    const rows = [""];
+    const places: Place[] = [];
+    let col = 0;
+    let pos = 0;
+    for (const g of Paint.text_graphemes(ed.text)) {
+      const x = g === "\n" ? "" : Paint.text_clean(g);
+      const width = Paint.text_width(x);
+      if (g !== "\n" && col + width > ed.w) {
+        rows.push("");
+        col = 0;
+      }
+      places.push({ pos, row: rows.length - 1, col });
+      pos += g.length;
+      rows[rows.length - 1] += x;
+      col += width;
+      if (g === "\n") {
+        rows.push("");
+        col = 0;
+      }
+    }
+    if (col >= ed.w) {
       rows.push("");
       col = 0;
     }
     places.push({ pos, row: rows.length - 1, col });
-    pos += g.length;
-    rows[rows.length - 1] += x;
-    col += Paint.text_width(x);
-    if (g === "\n") {
-      rows.push("");
-      col = 0;
-    }
+    layout = { text: ed.text, w: ed.w, rows, places };
+    LAYOUTS.set(ed, layout);
   }
-  if (col >= ed.w) {
-    rows.push("");
-    col = 0;
+  // Caret movement reuses the rows and grapheme boundaries. Find the
+  // first boundary at or after the caret, even inside a grapheme.
+  let low = 0;
+  let high = layout.places.length;
+  while (low < high) {
+    const mid = (low + high) >>> 1;
+    if (layout.places[mid].pos < ed.pos) low = mid + 1;
+    else high = mid;
   }
-  places.push({ pos, row: rows.length - 1, col });
-  LAYOUTS.set(ed, { text: ed.text, w: ed.w, rows, places });
-  return { rows, places, at: places.findIndex((p) => p.pos >= ed.pos) };
+  return { rows: layout.rows, places: layout.places, at: low < layout.places.length ? low : -1 };
 }
 
 // text typed or pasted, at the cursor
