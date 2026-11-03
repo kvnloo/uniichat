@@ -54,6 +54,21 @@ test("a pipe's last line, without a newline, waits in the input for the end", ()
   expect(ed.text).toBe("two");
 });
 
+test("an open completion menu captures navigation before input history", () => {
+  const { scr, keys } = screen();
+  scr.ed.hist = ["previous message"];
+  scr.ed.at = 1;
+  Screen.ed_type(scr.ed, "/mo");
+  scr.intercept = (key) => key === "Up" || key === "Down";
+  Screen.screen_feed(scr, "\x1b[A\x1b[B");
+  expect(scr.ed.text).toBe("/mo");
+  expect(scr.ed.at).toBe(1);
+  expect(keys).toEqual([]);
+  scr.intercept = undefined;
+  Screen.screen_feed(scr, "\x1b[A");
+  expect(scr.ed.text).toBe("previous message");
+});
+
 test("Alt and a character outside the BMP is one key, none of it typed", () => {
   const keys: string[] = [];
   const scr  = { tty: true, kitty: false, ed: { text: "", pos: 0, hist: [], at: 0, draft: "", moved: false, w: 80, tall: 1 }, rest: "", up: 0, rows: 0, on: (k: string) => k !== "" && keys.push(k) };

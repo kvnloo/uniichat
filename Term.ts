@@ -27,6 +27,7 @@ import * as Paint from "./Paint.ts";
 import { type Move, Pick } from "./Pick.ts";
 import * as Screen from "./Screen.ts";
 import * as View from "./View.ts";
+import * as Complete from "./Complete.ts";
 
 // Types
 // =====
@@ -53,6 +54,8 @@ type Term = {
   imgs    : Blob[];
   flow    : Map<View.Live, number>;
   logs    : Map<string, number>;
+  importSessions : number;
+  completion : { text: string; at: number; hidden: boolean };
 };
 
 // a line of /help: how it is typed ("": keys only), its keys, what it
@@ -221,7 +224,10 @@ function term_new(url: string): Term {
     imgs    : [],
     flow    : new Map(),
     logs    : new Map(),
+    completion : { text: "", at: 0, hidden: false },
+    importSessions : 0,
   };
+  t.scr.intercept = (key) => term_complete(t, key);
   process.stdin.on("end", () => {
     if (t.scr.ed.text.trim() !== "") {
       term_enter(t);
@@ -357,6 +363,58 @@ function term_press(t: Term, key: string): void {
     cmd[3](t, cmd[0] === "" ? key : "");
   }
   term_draw(t);
+}
+
+// Complete local command names and their live argument values.
+function term_matches(t: Term): Complete.Choice[] {
+  const ed = t.scr.ed;
+  const state = t.completion;
+  if (state.text !== ed.text) {
+    Object.assign(state, { text: ed.text, at: 0, hidden: false });
+  }
+  if (!t.scr.tty || state.hidden) {
+    return [];
+  }
+  const matches = Complete.choices(ed.text, ed.pos, term_commands(t.v).map(([use, , description]) => ({ use, description })), t.v, t.importSessions);
+  state.at = Math.min(state.at, Math.max(0, matches.length - 1));
+  return matches;
+}
+
+function term_complete(t: Term, key: string): boolean {
+  const matches = term_matches(t);
+  if (matches.length === 0) {
+    return false;
+  }
+  const state = t.completion;
+  if (key === "Esc") {
+    state.hidden = true;
+  } else if (key === "Up" || key === "Down") {
+    state.at = (state.at + (key === "Up" ? -1 : 1) + matches.length) % matches.length;
+  } else if (key === "Tab" || (key === "Enter" && matches[state.at].text.trimEnd() !== t.scr.ed.text.trimEnd())) {
+    const choice = matches[state.at];
+    Object.assign(t.scr.ed, { text: choice.text, pos: choice.pos, moved: false });
+    Object.assign(state, { text: choice.text, at: 0, hidden: !choice.more });
+  } else {
+    return false;
+  }
+  return true;
+}
+
+function term_suggestions(t: Term, max: number): Paint.Line[] {
+  const matches = term_matches(t);
+  if (matches.length === 0 || max < 2) {
+    return [];
+  }
+  const count = Math.min(6, max - 1);
+  const at = t.completion.at;
+  const start = Math.max(0, Math.min(at - count + 1, matches.length - count));
+  const lines = matches.slice(start, start + count).map((choice, i) => [
+    Paint.Run(start + i === at ? "> " : "  ", Paint.DIM),
+    Paint.Run(choice.label, { ...Paint.INK, b: start + i === at }),
+    Paint.Run("  " + choice.description, Paint.DIM),
+  ]);
+  lines.push([Paint.Run("  ↑↓ select · Tab complete · Esc dismiss", Paint.DIM)]);
+  return lines;
 }
 
 // Enter: runs a command, or sends the input; text not sent stays (it
@@ -579,6 +637,7 @@ async function term_import(t: Term, arg: string): Promise<void> {
   }
   const old   = await done.json();
   const shown = Import.import_plan(sessions, want, old, View.view_count(t.v)).sessions;
+  t.importSessions = shown.length;
   want.off    = shown.filter((s, k) => words.includes("-#" + (k + 1))).map(Import.import_id);
   const plan  = Import.import_plan(sessions, want, old, View.view_count(t.v));
   const found = "Found " + Import.import_count(plan.msgs, "new ") + ". ";
@@ -908,9 +967,10 @@ function term_paint(t: Term): void {
   const iw    = term_inner();
   const room  = (process.stdout.rows || 24) - 1;
   const off   = !View.view_typing(t.v);
-  const input = Screen.screen_input(t.scr, iw, room - 3, off ? OFF : View.HINT + " · /help", off);
+  const suggestions = term_suggestions(t, Math.max(0, room - 4));
+  const input = Screen.screen_input(t.scr, iw, room - 3 - suggestions.length, off ? OFF : View.HINT + " · /help", off);
   const under = Paint.rule_text(t.v.up ? "" : "offline", iw);
-  const own   = term_inset([Paint.rule_line(t.v, iw), ...input.lines, under, Paint.tabs_line(t.v, iw)]);
+  const own   = term_inset([Paint.rule_line(t.v, iw), ...input.lines, ...suggestions, under, Paint.tabs_line(t.v, iw)]);
   const rest  = View.view_stream(t.v).map((l) => ({ kind: l.kind, text: l.text.slice(t.flow.get(l) ?? 0) }));
   const held  = t.v.page === null ? View.view_rows(t.v, t.wait).flat() : [];
   const tail  = term_lines([...held, ...View.view_tail(t.v, rest)]).flatMap((l) => Paint.runs_wrap(l, w, true));

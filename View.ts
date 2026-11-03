@@ -543,13 +543,14 @@ export function view_pick(v: View): Knob[] {
   if (v.pick === null) {
     return [];
   }
-  const { model, effort, speed } = v.pick;
-  const rate  = Price.rate(Pick.ask(v.pick).model);
-  const price = rate === undefined ? "" : ": $" + rate.input + "/M tokens in, $" + rate.output + "/M out";
+  const { vendor, model, effort, speed } = v.pick;
+  const subscription = vendor.endsWith("-sub");
+  const rate  = subscription ? undefined : Price.rate(Pick.ask(v.pick).model);
+  const price = subscription ? ": subscription plan limits apply" : rate === undefined ? "" : ": $" + rate.input + "/M tokens in, $" + rate.output + "/M out";
   return [
     { text: model, move: "model", hint: model + price },
-    { text: effort, move: "effort", hint: effort + " effort: how long it thinks first; more is smarter, slower and costs more" },
-    { text: speed, move: "speed", hint: speed + ": ×" + Price.times(speed) + " the price" },
+    { text: effort, move: "effort", hint: effort + " effort: how long it thinks first; more is smarter, slower and " + (subscription ? "uses more of your plan" : "costs more") },
+    { text: speed, move: "speed", hint: subscription ? speed + ": subscription plan limits apply" : speed + ": ×" + Price.times(speed) + " the price" },
   ];
 }
 
