@@ -43,8 +43,8 @@ AskAI.ts (model calls and the cache).
 Run it
 ------
 
-You need [Bun](https://bun.sh) and an Anthropic API key (or an OpenAI
-one, below).
+You need [Bun](https://bun.sh) and an Anthropic API key, an OpenAI API key,
+or a ChatGPT subscription signed in through Codex CLI (below).
 
     export ANTHROPIC_API_KEY=sk-ant-...
     bun Server.ts                    # http://127.0.0.1:8788, data in ~/.unii
@@ -66,6 +66,25 @@ Other commands:
                                      # one `unii` executable; `unii serve`
                                      # runs the server it carries
 
+As an ACP agent
+---------------
+
+`unii acp [url]` (or `bun Term.ts acp [url]`) speaks the Agent Client
+Protocol on stdio, so ACP hosts (T3 Code, Zed, JetBrains) can drive the
+chat. Sign in first with `unii login [url]`. Every ACP session is a view
+of the same one chat and a device of its own, named `<computer>-<folder>`:
+the agent's tools run in the session's cwd (its work dir, under
+`~/.unii/acp`, links each agent's dir to that cwd). A prompt streams the
+reply, thoughts and tool calls until no work runs; cancel stops all
+work. Example T3 Code provider instance (`settings.json`):
+
+    "uniichat": {
+      "driver": "acpRegistry",
+      "displayName": "UniiChat",
+      "enabled": true,
+      "config": { "source": "local", "commandPath": "unii", "commandArgs": ["acp"] }
+    }
+
 Your chats live in ~/.unii/users/<id>, one JSON line per message
 (main/) and per summary (tree/). They are the memory: back them up.
 
@@ -79,7 +98,7 @@ also be set as the variable `UNII_<KEY>`:
   http://127.0.0.1:8788). Another port: `UNII_SITE=http://127.0.0.1:9000
   bun Server.ts 9000`.
 - `vendors`: what the server offers, comma-separated: `claude-api`
-  (default), `openai-api`.
+  (default), `openai-api`, `openai-sub` (ChatGPT subscription via Codex CLI).
 - `models`: the models offered, by label (Pick.ts; default all).
 - `pick`: what a chat runs on until it picks another,
   `vendor:model:effort:speed` (default `claude-api:sonnet-5.5:medium:slow`).
@@ -104,9 +123,50 @@ With only an OpenAI key, set `vendors`, `pick` and `compactor` to
 UNII_PICK=openai-api:gpt-6.1-sol:medium:slow
 UNII_COMPACTOR=openai-api:gpt-6-luna:high:slow`.
 
+To use existing ChatGPT and Claude subscription logins without API keys:
+
+    UNII_VENDORS=openai-sub,anthropic-sub \
+    UNII_PICK=openai-sub:gpt-6-luna:low:slow \
+    UNII_COMPACTOR=openai-sub:gpt-6-luna:low:slow \
+    UNII_AGENTS=openai-sub:gpt-6-luna:low:slow bun Server.ts
+
+All three roles default to Luna in this example, but `/model` offers both
+subscription catalogs. Omit `UNII_MODELS` to offer the whole catalog; set
+it only when you deliberately want to restrict the picker.
+
+`openai-sub` uses your ChatGPT plan's Codex limits, not OpenAI API credit.
+It reads `$CODEX_HOME/auth.json` (default `~/.codex/auth.json`), or the
+existing OpenAI Codex OAuth login in OMP. `anthropic-sub` reuses OMP's
+Anthropic OAuth login and calls the Messages API on your Claude plan.
+OMP's credential store defaults to `~/.omp/agent/agent.db`; set
+`OMP_AGENT_DIR` if yours lives elsewhere. Credentials are read-only:
+Unii does not copy, rotate, or log tokens. Sign in or refresh through the
+owning CLI if neither store has a valid session; no new login is needed
+when an existing session is valid. There is no API fallback.
+
+`SubscriptionModels.ts` records the authenticated provider catalogs
+retrieved on 2026-10-22: nine OpenAI text models and fourteen Claude
+models, with their supported efforts. This is a catalog snapshot, not a
+promise that every plan can run every entry; provider limits and model
+permissions still apply. Refresh the snapshot when the providers change
+their catalogs. API provider catalogs remain separate.
+
+Codex subscription requests use implicit caching: Unii's explicit API
+cache breakpoints and output-token caps are not sent to that endpoint.
+Voice transcription still needs a separate `OPENAI_API_KEY`.
+
 A self-hosted server is free: it bills no one, shows no prices, and calls
 only the model vendors. Billing.ts is the one place a hosted server
 plugs in its billing (uniichat.com sells credits; this repo has none).
+
+Set `UNII_USAGE_LEDGER` to a local JSONL file to record request metrics.
+Its parent directory must exist. Each completed request attempt records
+its role, model, effort, token counters, latency, retry index, HTTP status,
+and error category. Input excludes cached reads and cache writes. Missing
+provider usage is `null`, not an estimate. Retries are separate rows.
+The ledger excludes prompts, response text, credentials, and provider
+error messages. It is disabled by default and does not measure subscription
+quota weights or dollar charges. Protect and rotate the local file yourself.
 
 The `unii` terminal
 -------------------
@@ -117,6 +177,19 @@ uniichat.com; `unii <url>` opens any server. Run with
 `UNII_COMPUTER=1` on a Mac, the agent may use its screen (it compiles
 Computer.swift with swiftc; macOS asks for Screen Recording and
 Accessibility).
+
+Type `/` to see available slash commands; keep typing to filter.
+Up/Down selects a command, Tab completes it, and Esc dismisses the menu
+without interrupting a running reply. Enter also completes a partial
+command; press Enter again to run it. A fully typed command runs normally.
+After the command name, the same menu completes enabled models,
+model-supported efforts/speeds, chat tabs, running agents, visible block
+IDs, import flags and known session exclusions. `/image` completes local
+image paths (including quoted/escaped spaces); `/import` completes export
+paths and successive options. Directories stay open for further completion.
+The importer still requires whitespace-free export paths. Goals, amounts,
+dates and deletion confirmations are entered manually. Ordinary messages
+keep their usual editing and history keys.
 
 Telemetry: once a day the `unii` terminal asks bend-lang.com's /check
 for the latest version (Term.ts update_check), sending its version, OS

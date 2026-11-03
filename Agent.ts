@@ -1,8 +1,9 @@
 // Agent
 // =====
-// claude-api and openai-api in Unii's own loop; a Wire (Anthropic.ts,
-// OpenAI.ts) shapes requests and reads streams. Each step sends every
-// item and streams one output; tool calls run in order, a message sent
+// The API and subscription vendors in Unii's own loop; a Wire
+// (Anthropic.ts, OpenAI.ts, Codex.ts) shapes requests and reads streams.
+// Each step sends every item and streams one output; tool calls run in
+// order, a message sent
 // mid-run follows the next results, and the call ends at a step with no
 // tools and nothing sent. A request goes again, TRIES times at most,
 // after its retry-after or a doubling wait, for a passing reason (`busy`:
@@ -34,7 +35,10 @@
 import { AskAI, type Grant, type Cost, type Ask, type Block, type Flight, type Try, type End, type Event, type Img, type Kind, type Say } from "./AskAI.ts";
 import { Anthropic } from "./Anthropic.ts";
 import { OpenAI } from "./OpenAI.ts";
+import { Codex } from "./Codex.ts";
+import { Claude } from "./Claude.ts";
 import { Price, type Usage } from "./Price.ts";
+import { UsageLedger } from "./UsageLedger.ts";
 import { live_push } from "./View.ts";
 import { Machine, type Spec } from "./Machine.ts";
 import * as config from "./Config.ts";
@@ -94,7 +98,7 @@ export type Emit = (kind: Kind, text: string, fresh?: boolean) => void;
 // counts them (null: not told), and how its stream reads into a step (S:
 // what it read so far)
 export type Wire<S> = {
-  key     : string;
+  key     : string | (() => string);
   idle    : number;
   url     : string;
   headers : (key: string, ask: Ask) => Record<string, string>;
@@ -151,6 +155,10 @@ export namespace Agent {
       try {
         if (ask.vendor === "claude-api") {
           await Agent.loop(Anthropic.wire, run);
+        } else if (ask.vendor === "anthropic-sub") {
+          await Agent.loop(Claude.wire, run);
+        } else if (ask.vendor === "openai-sub") {
+          await Agent.loop(Codex.wire, run);
         } else {
           await Agent.loop(OpenAI.wire, run);
         }
@@ -167,15 +175,22 @@ export namespace Agent {
   export async function loop<S>(wire: Wire<S>, run: Run): Promise<void> {
     const { ask, on, end } = run;
     const signal = run.abort.signal;
-    const key = config.KEYS[wire.key];
-    if (!key) {
-      throw new Error("no API key: set " + wire.key.toUpperCase() + "_API_KEY");
-    }
+    const key = () => {
+      if (typeof wire.key === "function") {
+        return wire.key();
+      }
+      const value = config.KEYS[wire.key];
+      if (!value) {
+        throw new Error("no API key: set " + wire.key.toUpperCase() + "_API_KEY");
+      }
+      return value;
+    };
+    key();
     const tools = await Agent.server(run);
     const parts = ask.blocks.filter((b) => b.text !== "");
     const items: Item[] = [{ $: "User", parts, imgs: ask.imgs ?? [] }];
     while (!signal.aborted) {
-      const step = await Agent.step(wire, run, key, (max) => wire.body(ask, items, tools, max), items);
+      const step = await Agent.step(wire, run, key(), (max) => wire.body(ask, items, tools, max), items);
       for (const entry of step.entries) {
         on({ $: "Entry", ...entry });
       }
@@ -239,7 +254,7 @@ export namespace Agent {
       for (let k = 1; !signal.aborted; k++) {
         await Agent.yielded(run, own, asking);
         const seen: Entry[] = [];
-        const sent = Agent.request(wire, run, key, make, cost, seen);
+        const sent = Agent.request(wire, run, key, make, cost, seen, k - 1);
         const stopped = new Promise<null>((done) => signal.addEventListener("abort", () => done(null), { once: true }));
         const got = await Promise.race([sent, stopped]);
         if (got === null) {
@@ -326,6 +341,11 @@ export namespace Agent {
   // RESULT tokens more; and an output token's, at a prompt that size (a
   // long one may cost more)
   export function worst(ask: Ask, json: string, items: Item[], count: () => Promise<number | null>): Cost {
+    // Subscription quota is not per-token API credit. In particular, older
+    // subscription models need no invented API rate just to use this loop.
+    if (ask.vendor === "openai-sub" || ask.vendor === "anthropic-sub") {
+      return { input: 0, token: 0, exact: null };
+    }
     const imgs = items.flatMap((item) => (item.$ === "User" ? item.imgs : item.$ === "Back" ? item.backs.flatMap((b) => b.out.imgs ?? []) : []));
     const write = Buffer.byteLength(json) + imgs.reduce((n, img) => n + PIC - img.data.length, 0);
     const web = Price.cost(ask.model, { ...Price.usage(ask.speed), write: ask.searches * RESULT, searches: ask.searches });
@@ -338,7 +358,7 @@ export namespace Agent {
   // flight (AskAI.wait); then, if paid, read to the end of its stream
   // whether the call stops or not, and billed: its response, if any, and
   // step
-  export async function request<S>(wire: Wire<S>, run: Run, key: string, make: (max: number) => unknown, cost: Cost, seen: Entry[]): Promise<{ res: Response | null; step: Step }> {
+  export async function request<S>(wire: Wire<S>, run: Run, key: string, make: (max: number) => unknown, cost: Cost, seen: Entry[], retries = 0): Promise<{ res: Response | null; step: Step }> {
     const grant = run.ask.bill ? await run.ask.bill(cost, MAX) : FREE;
     if (typeof grant === "string") {
       return { res: null, step: Agent.fail(grant, []) };
@@ -350,10 +370,11 @@ export namespace Agent {
       return { res: null, step: Agent.fail("stopped", []) };
     }
     READING.n += 1;
-    return Agent.send(wire, run, key, make(grant.max), grant, flight, seen).finally(() => (READING.n -= 1));
+    return Agent.send(wire, run, key, make(grant.max), grant, flight, seen, retries).finally(() => (READING.n -= 1));
   }
 
-  export async function send<S>(wire: Wire<S>, run: Run, key: string, body: unknown, grant: Grant, flight: Flight, seen: Entry[]): Promise<{ res: Response | null; step: Step }> {
+  export async function send<S>(wire: Wire<S>, run: Run, key: string, body: unknown, grant: Grant, flight: Flight, seen: Entry[], retries = 0): Promise<{ res: Response | null; step: Step }> {
+    const started = Date.now();
     const idle = new AbortController();
     const timer = setTimeout(() => idle.abort(new Error("no word from the API in " + wire.idle / 1e3 + " s")), wire.idle);
     const st = wire.start(run.ask);
@@ -376,6 +397,9 @@ export namespace Agent {
     }
     clearTimeout(timer);
     flight.end();
+    if (process.env.UNII_USAGE_LEDGER) {
+      UsageLedger.append(run.ask, wire.usage(st), started, retries, res?.status ?? null, step.stop, read.done, Buffer.byteLength(step.entries.filter((e) => e.kind === "unii").map((e) => e.text).join("\n").trim()));
+    }
     const { vendor, model, effort, speed } = run.ask;
     const use = res?.ok ? Agent.used(wire.usage(st), read, json) : null;
     grant.end(use && { run: { vendor, model, effort, speed }, use });
