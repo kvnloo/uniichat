@@ -1,0 +1,94 @@
+# The fork's required checks: every pull request, every push to main and
+# to an integration branch, and by hand. Each job runs on the exact head
+# it was triggered for; an integration branch is checked as merged, not
+# by its input PRs (RFC-5: kvnloo/uniichat#15).
+#
+# test   bun test --isolate (each file on its own, as package.json says)
+# types  the tsp/ typechecks, where the tree has them (tsp:check)
+# web    web/app.js is built from web/src: a rebuild must not change it
+# build  `unii` compiles to one executable, starts, and (where the tree
+#        has Acp.ts) answers an ACP initialize on stdio
+name: checks
+on:
+  pull_request:
+  push:
+    branches: [main, "integration/**"]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: checks-${{ github.ref }}
+  cancel-in-progress: true
+env:
+  BUN_VERSION: 1.3.14
+  UNII_NO_TELEMETRY: "1"
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+      - name: install
+        run: if [ -f bun.lock ]; then bun install --frozen-lockfile; fi
+      - name: test
+        run: bun test --isolate
+  types:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+      - name: typecheck
+        run: |
+          if jq -e '.scripts["tsp:check"]' package.json >/dev/null; then
+            bun install --frozen-lockfile
+            bun run tsp:check
+          else
+            echo "no tsp:check in this tree"
+          fi
+  web:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+      - name: rebuild web/app.js
+        run: bun run web
+      - name: no drift
+        run: git diff --exit-code -- web/app.js
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+      - name: install
+        run: if [ -f bun.lock ]; then bun install --frozen-lockfile; fi
+      - name: compile
+        run: bun build --compile Term.ts --outfile unii
+      - name: starts
+        run: ./unii version && ./unii help >/dev/null
+      - name: acp initialize
+        run: |
+          if [ ! -f Acp.ts ]; then echo "no Acp.ts in this tree"; exit 0; fi
+          out=$( { printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":1}}'; sleep 2; } | UNII_HOME="$RUNNER_TEMP/unii" timeout 20 ./unii acp http://127.0.0.1:9 )
+          echo "$out"
+          echo "$out" | jq -e 'select(.id == 1) | .result.protocolVersion == 1'
+      - name: sha256
+        run: sha256sum unii | tee unii.sha256
+      - uses: actions/upload-artifact@v4
+        with:
+          name: unii-linux-x64-${{ github.sha }}
+          path: |
+            unii
+            unii.sha256
+          retention-days: 14
