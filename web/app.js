@@ -20,7 +20,8 @@ function clip_pages(str) {
   return pages;
 }
 async function* stream_lines(stream) {
-  const reader = stream.pipeThrough(new TextDecoderStream).getReader();
+  const decoder = new TextDecoderStream;
+  const reader = stream.pipeThrough(decoder).getReader();
   let rest = "";
   for (let got = await reader.read();!got.done; got = await reader.read()) {
     const nl = got.value.lastIndexOf(`
