@@ -72,8 +72,8 @@ async function* import_read(s) {
   }
 }
 function line_log(s, j, last) {
-  s.app ||= j.type === "session_meta" ? "ChatGPT" : "Claude";
-  return s.app === "ChatGPT" ? line_codex(s, j, last) : line_claude(s, j, last);
+  s.app ||= j.type === "session_meta" ? "ChatGPT" : j.type === "title" || j.type === "session" ? "OMP" : "Claude";
+  return s.app === "ChatGPT" ? line_codex(s, j, last) : s.app === "OMP" ? line_omp(s, j, last) : line_claude(s, j, last);
 }
 function line_msgs(s, line, last) {
   try {
@@ -309,6 +309,31 @@ function item_codex(p, date) {
     case "function_call_output":
     case "custom_tool_call_output": {
       return msgs_of("echo", parts_text(p.output), date);
+    }
+  }
+  return [];
+}
+function line_omp(s, j, last) {
+  const date = import_date(j.timestamp, last);
+  if (j.type === "session") {
+    s.where = j.parentSession ? "" : "session in " + String(j.cwd ?? "");
+  }
+  return j.type === "message" && s.where !== "" ? message_omp(j.message ?? {}, date) : [];
+}
+function message_omp(m, date) {
+  const blocks = typeof m.content === "string" ? [{ type: "text", text: m.content }] : Array.isArray(m.content) ? m.content : [];
+  const say = blocks.filter((b) => b?.type === "image" || b?.type === "text" && !INJECTED.test(b.text ?? ""));
+  switch (m.role) {
+    case "user": {
+      return msgs_of("user", parts_text(say), date);
+    }
+    case "assistant": {
+      const calls = blocks.filter((b) => b?.type === "toolCall");
+      const args = (b) => typeof b.arguments === "string" ? b.arguments : JSON.stringify(b.arguments ?? {});
+      return [...msgs_of("unii", parts_text(say), date), ...calls.flatMap((b) => msgs_of("tool", b.name + " " + args(b), date))];
+    }
+    case "toolResult": {
+      return msgs_of("echo", parts_text(blocks.filter((b) => b !== null)), date);
     }
   }
   return [];

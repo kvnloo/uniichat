@@ -1,7 +1,7 @@
 // Import
 // ======
-// A person's past Claude and ChatGPT chats (APPS), read into their chat:
-// those on their computer (Claude Code's and Codex's logs), by the
+// A person's past Claude, ChatGPT and OMP chats (APPS), read into their
+// chat: those on their computer (Claude Code's, Codex's and OMP's logs), by the
 // terminal (Term.ts `/import`) or a folder picked on the site (main.ts),
 // and those on the websites, from the zip each mails on request
 // (import_export). A session (a log; a site's chat) is streamed twice:
@@ -30,8 +30,8 @@ export type Msg = { kind: Kind; text: string; date: string; more?: boolean };
 // its place in its session
 export type Head = { kind: Kind; date: string; size: number; n: number };
 
-// how a session's file reads: a log (Claude Code's or Codex's, told by
-// its first line), or its messages as JSON lines (a site's chat)
+// how a session's file reads: a log (Claude Code's, Codex's or OMP's,
+// told by its first line), or its messages as JSON lines (a site's chat)
 export type Form = "log" | "msgs";
 
 // a session: its app (APPS), its form, where it was (a log: "session in
@@ -75,9 +75,9 @@ const PRICE = { base: 187, byte: 735, depth: 628 };
 // Blob, on disk when large, so a page never holds an import whole
 const PART = 2 ** 20;
 
-// the apps a session is of: two sources, each its program on the
-// computer and its website
-export const APPS = ["Claude", "ChatGPT"];
+// the apps a session is of: Claude and ChatGPT, each its program on the
+// computer and its website; OMP (oh-my-pi), its program only
+export const APPS = ["Claude", "ChatGPT", "OMP"];
 
 // sessions all imported before
 export const OLD = "Nothing new: these chats are in Unii's memory already.";
@@ -136,10 +136,11 @@ export async function* import_read(s: Session): AsyncGenerator<Msg> {
 }
 
 // a log's line: a Codex log (first line session_meta) is a ChatGPT
-// session, a Claude Code log a Claude one
+// session, an OMP log (first line its title or its session) an OMP one,
+// a Claude Code log a Claude one
 function line_log(s: Session, j: any, last: string): Msg[] {
-  s.app ||= j.type === "session_meta" ? "ChatGPT" : "Claude";
-  return s.app === "ChatGPT" ? line_codex(s, j, last) : line_claude(s, j, last);
+  s.app ||= j.type === "session_meta" ? "ChatGPT" : j.type === "title" || j.type === "session" ? "OMP" : "Claude";
+  return s.app === "ChatGPT" ? line_codex(s, j, last) : s.app === "OMP" ? line_omp(s, j, last) : line_claude(s, j, last);
 }
 
 // a line's messages; none if it is no JSON, or JSON of a shape its reader
@@ -485,6 +486,40 @@ function item_codex(p: any, date: string): Msg[] {
     case "function_call_output":
     case "custom_tool_call_output": {
       return msgs_of("echo", parts_text(p.output), date);
+    }
+  }
+  return [];
+}
+
+// OMP
+// ===
+
+// a subagent's log (its session line names a parent) is no person's
+// chat; before the session line, nothing is (where is unknown)
+function line_omp(s: Session, j: any, last: string): Msg[] {
+  const date = import_date(j.timestamp, last);
+  if (j.type === "session") {
+    s.where = j.parentSession ? "" : "session in " + String(j.cwd ?? "");
+  }
+  return j.type === "message" && s.where !== "" ? message_omp(j.message ?? {}, date) : [];
+}
+
+// a person's say (but what a harness injected), OMP's say and its tool
+// calls, the tools' results; never thinking, nor a developer's reminder
+function message_omp(m: any, date: string): Msg[] {
+  const blocks = typeof m.content === "string" ? [{ type: "text", text: m.content }] : Array.isArray(m.content) ? m.content : [];
+  const say    = blocks.filter((b: any) => b?.type === "image" || (b?.type === "text" && !INJECTED.test(b.text ?? "")));
+  switch (m.role) {
+    case "user": {
+      return msgs_of("user", parts_text(say), date);
+    }
+    case "assistant": {
+      const calls = blocks.filter((b: any) => b?.type === "toolCall");
+      const args  = (b: any) => (typeof b.arguments === "string" ? b.arguments : JSON.stringify(b.arguments ?? {}));
+      return [...msgs_of("unii", parts_text(say), date), ...calls.flatMap((b: any) => msgs_of("tool", b.name + " " + args(b), date))];
+    }
+    case "toolResult": {
+      return msgs_of("echo", parts_text(blocks.filter((b: any) => b !== null)), date);
     }
   }
   return [];
