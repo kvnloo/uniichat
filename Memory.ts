@@ -140,7 +140,7 @@ export type Memory = {
 // =========
 
 const NODE  = 512;
-export const JOBS = 64;
+export const JOBS = Number(process.env.UNII_JOBS ?? 64);
 const TRIES = 5;
 // a view past its `high` merges to half: the chat's 64-128 KB (96 KB on
 // average), the compactions' 16-32 KB (24 KB)
